@@ -1,0 +1,8 @@
+pillow
+cryptography
+segno
+opencv-python
+pyzbar
+numpy
+PySide6
+
