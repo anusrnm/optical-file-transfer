@@ -493,6 +493,10 @@
                     <span class="progress-label" id="senderProgressText">0%</span>
                 </div>
 
+                <div id="audioStatus" style="background: var(--panel-alt); padding: 4px 8px; border-radius: 4px; margin: 4px 0; font-size: 0.7em; color: var(--text-muted); border: 1px solid var(--border); text-align: center; display: none;">
+                    Audio Status: Listening for confirmations...
+                </div>
+
                 <div class="qr-display">
                     <div id="qrcode"></div>
                 </div>
@@ -516,12 +520,10 @@
                         <span id="chunkTotal">/ 0</span>
                         <button onclick="nextChunk()">▶</button>
                         <button id="playPauseBtn" onclick="togglePlayPause()">▶️</button>
-                        <button onclick="resetSender()">🔄</button>
+                        <button onclick="resetSender()">�</button>
                     </div>
                     <div class="speed-control" id="speedCtrl" style="display:none; margin-top:6px;">
-                        <label for="speedSlider">Speed:</label>
-                        <input type="range" id="speedSlider" min="1" max="10" value="5" step="1" oninput="updateSpeedRealtime()">
-                        <span id="speedValue">700ms</span>
+                        <div style="color: var(--text-muted); font-size: 0.9em;">Audio synchronized - waits for receiver confirmation</div>
                     </div>
                 </div>
 
@@ -579,7 +581,7 @@
 
     <script>
         // Application version
-        const APP_VERSION = '0.1.0';
+        const APP_VERSION = '0.1.1';
         // Global variables
         let fileData = null;
         let chunks = [];
@@ -587,6 +589,13 @@
         let displayInterval = null;
         const DEFAULT_SPEED = 700; // Default display speed in milliseconds
         let displaySpeed = DEFAULT_SPEED;
+
+        // Audio synchronization variables
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let audioDataArray = null;
+        let isListeningForConfirmation = false;
 
         // Receiver variables
         let video = null;
@@ -675,6 +684,117 @@
             if (!str || typeof str !== 'string') return '';
             const sanitized = str.replaceAll(/[^A-Za-z0-9+/=]/g, '');
             return sanitized;
+        }
+
+        // ==================== AUDIO SYNCHRONIZATION ====================
+        
+        // Play a confirmation sound when receiver successfully processes a QR code
+        function playConfirmationSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                // Generate a 800Hz beep for 200ms
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.type = 'sine';
+                
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.2);
+                
+                debugLog('Confirmation sound played');
+            } catch (e) {
+                debugLog('Audio playback failed: ' + e.message);
+            }
+        }
+
+        // Start listening for confirmation sound from receiver
+        function startAudioListening() {
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        microphone = audioContext.createMediaStreamSource(stream);
+                        analyser = audioContext.createAnalyser();
+                        analyser.fftSize = 2048;
+                        analyser.smoothingTimeConstant = 0.8;
+                        
+                        microphone.connect(analyser);
+                        audioDataArray = new Uint8Array(analyser.frequencyBinCount);
+                        
+                        isListeningForConfirmation = true;
+                        senderLog('Audio listening started for confirmation sounds');
+                        // Show audio status
+                        const audioStatus = document.getElementById('audioStatus');
+                        if (audioStatus) audioStatus.style.display = 'block';
+                        listenForConfirmation();
+                    })
+                    .catch(err => {
+                        senderLog('Microphone access failed: ' + err.message);
+                    });
+            } catch (e) {
+                senderLog('Audio listening setup failed: ' + e.message);
+            }
+        }
+
+        // Continuously listen for the 800Hz confirmation tone
+        function listenForConfirmation() {
+            if (!isListeningForConfirmation || !analyser) return;
+            
+            analyser.getByteFrequencyData(audioDataArray);
+            
+            // Look for strong signal around 800Hz
+            // FFT bin calculation: bin = (frequency * fftSize) / sampleRate
+            const sampleRate = audioContext.sampleRate;
+            const targetBin = Math.round((800 * analyser.fftSize) / sampleRate);
+            
+            // Check neighboring bins for the tone
+            let maxAmplitude = 0;
+            for (let i = targetBin - 2; i <= targetBin + 2; i++) {
+                if (i >= 0 && i < audioDataArray.length) {
+                    maxAmplitude = Math.max(maxAmplitude, audioDataArray[i]);
+                }
+            }
+            
+            // If we detect a strong 800Hz signal, advance to next chunk
+            if (maxAmplitude > 150) { // Threshold for detection
+                senderLog('Confirmation sound detected! Advancing to next chunk...');
+                nextChunk();
+                // Brief pause to avoid multiple detections
+                setTimeout(() => {
+                    requestAnimationFrame(listenForConfirmation);
+                }, 500);
+                return;
+            }
+            
+            requestAnimationFrame(listenForConfirmation);
+        }
+
+        // Stop audio listening
+        function stopAudioListening() {
+            isListeningForConfirmation = false;
+            if (microphone) {
+                microphone.disconnect();
+                microphone = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+            }
+            analyser = null;
+            senderLog('Audio listening stopped');
+            // Hide audio status
+            const audioStatus = document.getElementById('audioStatus');
+            if (audioStatus) audioStatus.style.display = 'none';
         }
 
         // ==================== SENDER FUNCTIONS ====================
@@ -812,20 +932,16 @@
             if (!chunks.length) return;
             
             stopDisplay(); // Clear any existing interval
+            // Start audio listening for synchronization
+            startAudioListening();
             // Don't reset currentChunkIndex - continue from where we are
             displayNextChunk();
             
-            displayInterval = setInterval(() => {
-                currentChunkIndex++;
-                if (currentChunkIndex >= chunks.length) {
-                    currentChunkIndex = 0; // Loop back to start
-                }
-                displayNextChunk();
-            }, displaySpeed);
+            senderLog('Audio-synchronized display started. Waiting for receiver confirmations...');
         }
 
         function togglePlayPause() {
-            if (displayInterval) {
+            if (isListeningForConfirmation) {
                 // Currently playing, pause it
                 stopDisplay();
                 document.getElementById('playPauseBtn').innerHTML = '▶️';
@@ -860,8 +976,11 @@
         }
 
         function updateSpeedRealtime() {
-            displaySpeed = Number.parseInt(document.getElementById('speedSlider').value);
-            document.getElementById('speedValue').textContent = displaySpeed + 'ms';
+            const speedLevel = Number.parseInt(document.getElementById('speedSlider').value);
+            // Higher level = faster speed (lower delay)
+            // Level 1 (slow) = 1100ms, Level 5 (default) = 700ms, Level 10 (fast) = 200ms
+            displaySpeed = 1200 - (speedLevel * 100);
+            document.getElementById('speedValue').textContent = `Level ${speedLevel} (${displaySpeed}ms)`;
             if (chunks.length > 0) {
                 const chunkInfo = document.getElementById('chunkInfo');
                 const estTime = Math.ceil(chunks.length * displaySpeed / 1000);
@@ -1025,6 +1144,8 @@
                 clearInterval(displayInterval);
                 displayInterval = null;
             }
+            // Stop audio listening
+            stopAudioListening();
         }
 
         function resetSender() {
@@ -1045,6 +1166,9 @@
             if (senderDbg) {
                 senderDbg.innerHTML = '<div>Sender Debug Ready...</div>';
             }
+            // Hide audio status
+            const audioStatus = document.getElementById('audioStatus');
+            if (audioStatus) audioStatus.style.display = 'none';
         }
 
         // ==================== RECEIVER FUNCTIONS ====================
@@ -1183,6 +1307,8 @@
                     // Only process when stable to reduce JSON.parse errors
                     if (stableCount >= REQUIRE_STABLE_FRAMES) {
                         debugLog('Stable QR detected. Processing...');
+                        // Play confirmation sound for sender synchronization
+                        playConfirmationSound();
                         // Set detected border
                         document.getElementById('camera-container').classList.remove('detecting');
                         document.getElementById('camera-container').classList.add('detected');
