@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optical File Transfer (Offline)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #111; color: #eee; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        .tab-bar { display: flex; border-bottom: 1px solid #333; }
+        .tab { flex: 1; padding: 15px; text-align: center; background: #222; cursor: pointer; }
+        .tab.active { background: #007acc; font-weight: bold; }
+        .content { flex: 1; display: none; flex-direction: column; padding: 10px; overflow: hidden; }
+        .content.active { display: flex; }
+        
+        /* Sender Styles */
+        #sender-display { flex: 1; display: flex; justify-content: center; align-items: center; background: #000; position: relative; }
+        #sender-canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+        .controls { padding: 10px; background: #222; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        button { padding: 10px 20px; background: #444; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { opacity: 0.5; }
+        button.primary { background: #007acc; }
+        
+        /* Receiver Styles */
+        #receiver-video-container { flex: 1; position: relative; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        #overlay-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .status-bar { padding: 5px; font-size: 0.8em; color: #aaa; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="tab-bar">
+    <div class="tab active" onclick="switchTab('sender')">Sender</div>
+    <div class="tab" onclick="switchTab('receiver')">Receiver</div>
+</div>
+
+<div style="position: fixed; bottom: 2px; right: 5px; font-size: 10px; color: #666; z-index: 1000; pointer-events: none;">
+    Rev: <span id="version-tag">Loading...</span>
+</div>
+
+<div id="toast" style="position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%); background: rgba(50, 50, 50, 0.9); color: #fff; padding: 10px 20px; border-radius: 5px; display: none; z-index: 2000; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.5);"></div>
+
+<!-- SENDER TAB -->
+<div id="sender" class="content active">
+    <div class="controls">
+        <input type="file" id="fileInput">
+        <button onclick="processFile()" class="primary">Load</button>
+    </div>
+    <div id="sender-meta" style="padding: 5px 10px; background: #222; font-size: 0.8em; color: #aaa; display: none;">
+        File: <span id="meta-filename">-</span> | Size: <span id="meta-size">-</span> | Total Frames: <span id="meta-total">-</span>
+    </div>
+    <div id="sender-display">
+        <canvas id="sender-canvas" width="768" height="432"></canvas> <!-- 64x12, 36x12 -->
+        <div id="qrcode" style="display:none; background: white; padding: 20px;"></div>
+    </div>
+    <div class="controls">
+        <button id="btnPrev" onclick="prevFrame()">&lt;</button>
+        <button id="btnPlay" onclick="togglePlay()">Play</button>
+        <button id="btnNext" onclick="nextFrame()">&gt;</button>
+        <input type="range" id="fpsRange" min="1" max="30" value="5" style="flex:1" onchange="updateFps()">
+        <span id="fpsLabel">5 FPS</span>
+        <span id="frameLabel">Frame: 0/0</span>
+    </div>
+</div>
+
+<!-- RECEIVER TAB -->
+<div id="receiver" class="content">
+    <div id="receiver-video-container">
+        <video id="video" playsinline autoplay></video>
+        <img id="rx-image" style="display: none; width: 100%; height: 100%; object-fit: contain;">
+        <canvas id="overlay-canvas"></canvas>
+    </div>
+    <div class="status-bar" id="rxStatus">Idle</div>
+    <div id="progress-container" style="margin: 5px 10px; background: #333; height: 10px; border-radius: 5px; overflow: hidden; display: none;">
+        <div id="progress-bar" style="width: 0%; height: 100%; background: #007acc; transition: width 0.2s;"></div>
+    </div>
+    <div id="debug-info" style="font-family: monospace; font-size: 0.7em; color: #f55; text-align: center; height: 1.2em;"></div>
+    <div class="controls">
+        <button onclick="toggleCamera()" id="btnCamera" class="primary">Start Camera</button>
+        <input type="file" id="rxUpload" accept="image/*" multiple style="display:none" onchange="handleRxUpload(this)">
+        <button onclick="document.getElementById('rxUpload').click()">Upload Files</button>
+        
+        <button onclick="toggleScan()" id="btnScan">Auto Scan</button>
+        <button onclick="captureFrame()" id="btnCapture" style="background: #e65100;">Capture & Analyze</button>
+        <button onclick="snapCorners()" id="btnSnap">Full Screen</button>
+        <button onclick="resetCorners()" id="btnCorners">Reset</button>
+        <!-- <button onclick="downloadFile()" id="btnSave" disabled>Save File</button> -->
+    </div>
+    <div class="controls" style="justify-content: center; font-size: 0.8em;">
+        <label><input type="checkbox" id="chkDebug" checked> Show Grid</label>
+        <label><input type="checkbox" id="chkBoost"> Low Light Mode</label>
+    </div>
+    <div style="text-align:center; color: #888; font-size: 0.7em; margin-top: 5px;">
+        Drag the 4 red corners to match the screen!
+    </div>
+    <div id="app-log" style="
+        background: #111; 
+        color: #0f0; 
+        font-family: monospace; 
+        font-size: 10px; 
+        height: 100px; 
+        overflow-y: auto; 
+        margin-top: 10px; 
+        padding: 5px; 
+        border: 1px solid #333;
+        display: none;
+    "></div>
+</div>
+
+<script>
+    // --- LOGGING HELPER ---
+    function log(msg) {
+        console.log(msg);
+        const div = document.getElementById('app-log');
+        if (div) {
+            div.style.display = 'block';
+            const line = document.createElement('div');
+            line.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            div.appendChild(line);
+            div.scrollTop = div.scrollHeight;
+        }
+    }
+    
+    log("Application Loaded. Ready.");
+    // --- SHARED CONSTANTS ---
+    const GRID_W = 64;
+    const GRID_H = 36;
+    const HEADER_ROWS = 2;
+    const PALETTE = [[0,0,0], [255,255,255], [255,0,0], [0,255,0]]; // 2 bits
+    const MAGIC = 0xABCD;
+    const FRAME_PAYLOAD_SIZE = 544; // Calculated from Python script logic
+    const APP_REVISION = "v1.7";
+
+    document.getElementById('version-tag').innerText = APP_REVISION;
+
+    // --- UTILS ---
+    function showToast(msg, duration=3000) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.display = 'block';
+        setTimeout(() => t.style.display = 'none', duration);
+    }
+
+    function switchTab(tab) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
+        document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+        document.getElementById(tab).classList.add('active');
+    }
+
+    // CRC32 Implementation
+    const crcTable = (function() {
+        let c;
+        let table = [];
+        for(let n =0; n < 256; n++){
+            c = n;
+            for(let k =0; k < 8; k++){
+                c = ((c&1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
+            }
+            table[n] = c;
+        }
+        return table;
+    })();
+
+    function crc32(buf) {
+        let crc = 0 ^ (-1);
+        for (let i = 0; i < buf.length; i++ ) {
+            crc = (crc >>> 8) ^ crcTable[(crc ^ buf[i]) & 0xFF];
+        }
+        return (crc ^ (-1)) >>> 0;
+    }
+
+    // --- SENDER LOGIC ---
+    let senderFrames = []; // Array of {type: 'qr'|'grid', data: ...}
+    let senderIdx = 0;
+    let senderTimer = null;
+    let senderFps = 5;
+
+    // --- CRYPTO UTILS ---
+    async function sha256(data) {
+        const buffer = data instanceof Uint8Array ? data : new TextEncoder().encode(data);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function computeMerkleRoot(leavesHex) {
+        if (!leavesHex.length) return '';
+        let level = leavesHex.map(h => {
+            const bytes = new Uint8Array(h.length / 2);
+            for(let i=0; i<h.length; i+=2) bytes[i/2] = parseInt(h.substr(i, 2), 16);
+            return bytes;
+        });
+        while (level.length > 1) {
+            const nextLevel = [];
+            for (let i = 0; i < level.length; i += 2) {
+                const left = level[i];
+                const right = (i + 1 === level.length) ? left : level[i+1];
+                const pair = new Uint8Array(left.length + right.length);
+                pair.set(left);
+                pair.set(right, left.length);
+                const hashBuffer = await crypto.subtle.digest('SHA-256', pair);
+                nextLevel.push(new Uint8Array(hashBuffer));
+            }
+            level = nextLevel;
+        }
+        return Array.from(level[0]).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function processFile() {
+        const fileInput = document.getElementById('fileInput');
+        if (!fileInput.files.length) return showToast("Select a file first");
+        const file = fileInput.files[0];
+        
+        senderFrames = [];
+        
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const fileHash = await sha256(bytes);
+        
+        // Chunking & Merkle Leaves
+        const chunks = [];
+        const leaves = [];
+        for (let i = 0; i < bytes.length; i += FRAME_PAYLOAD_SIZE) {
+            const chunk = bytes.slice(i, i + FRAME_PAYLOAD_SIZE);
+            chunks.push(chunk);
+            leaves.push(await sha256(chunk));
+        }
+        
+        const rootHash = await computeMerkleRoot(leaves);
+        const totalChunks = chunks.length;
+        
+        // Manifest (Full Python Compatibility)
+        const manifest = {
+            version: 1,
+            session_id: (await sha256(Date.now().toString())).substring(0, 32),
+            created_utc: new Date().toISOString().split('.')[0] + "Z",
+            files: [{
+                path: file.name,
+                size: file.size,
+                sha256: fileHash,
+                first_chunk: 0,
+                chunk_count: totalChunks
+            }],
+            chunk_size: FRAME_PAYLOAD_SIZE,
+            total_chunks: totalChunks,
+            merkle_root: rootHash,
+            encryption: { enabled: false },
+            fec: { scheme: 'parity', data: 8, parity: 1 },
+            encoding: { bootstrap: 'qr', data: 'grid' }
+        };
+
+        // Update Meta
+        document.getElementById('sender-meta').style.display = 'block';
+        document.getElementById('meta-filename').innerText = manifest.files[0].path;
+        document.getElementById('meta-size').innerText = (manifest.files[0].size / 1024).toFixed(1) + " KB";
+        document.getElementById('meta-total').innerText = manifest.total_chunks;
+        
+        // 1. QR Frame
+        senderFrames.push({ type: 'qr', data: JSON.stringify(manifest) });
+        
+        // 2. Grid Frames
+        chunks.forEach((chunk, i) => {
+            senderFrames.push({ type: 'grid', seq: i, chunkIdx: i, data: chunk });
+        });
+        
+        senderIdx = 0;
+        renderFrame();
+        document.getElementById('frameLabel').innerText = `1/${senderFrames.length}`;
+        showToast(`Loaded ${senderFrames.length} frames.`);
+    }
+
+    function renderFrame() {
+        if (!senderFrames.length) return;
+        const frame = senderFrames[senderIdx];
+        const canvas = document.getElementById('sender-canvas');
+        const ctx = canvas.getContext('2d');
+        const qrDiv = document.getElementById('qrcode');
+        
+        if (frame.type === 'qr') {
+            canvas.style.display = 'none';
+            qrDiv.style.display = 'block';
+            qrDiv.innerHTML = '';
+            new QRCode(qrDiv, {
+                text: frame.data,
+                width: 300,
+                height: 300
+            });
+        } else {
+            canvas.style.display = 'block';
+            qrDiv.style.display = 'none';
+            drawGridFrame(ctx, frame);
+        }
+        document.getElementById('frameLabel').innerText = `Frame: ${senderIdx + 1}/${senderFrames.length}`;
+    }
+
+    function drawGridFrame(ctx, frame) {
+        // Header: Magic(2), Seq(4), ChunkIdx(4), Len(4) -> 14 bytes
+        const header = new Uint8Array(14);
+        const view = new DataView(header.buffer);
+        view.setUint16(0, MAGIC, false); // Big Endian
+        view.setUint32(2, frame.seq, false);
+        view.setUint32(6, frame.chunkIdx, false);
+        view.setUint32(10, frame.data.length, false);
+        
+        // Calculate CRC of header
+        const crc = crc32(header);
+        
+        // Combine: Header(14) + CRC(4) + Data
+        const fullData = new Uint8Array(18 + frame.data.length);
+        fullData.set(header, 0);
+        const crcView = new DataView(fullData.buffer);
+        crcView.setUint32(14, crc, false);
+        fullData.set(frame.data, 18);
+        
+        // Convert to Symbols (2 bits)
+        const headerSymbols = [];
+        for (let b of fullData.slice(0, 18)) { // Header + CRC is 18 bytes
+            headerSymbols.push((b >> 6) & 0x03);
+            headerSymbols.push((b >> 4) & 0x03);
+            headerSymbols.push((b >> 2) & 0x03);
+            headerSymbols.push(b & 0x03);
+        }
+        
+        // Pad Header to fill HEADER_ROWS
+        const headerCapacity = GRID_W * HEADER_ROWS;
+        while (headerSymbols.length < headerCapacity) headerSymbols.push(0);
+        
+        // Data Symbols
+        const dataSymbols = [];
+        for (let b of fullData.slice(18)) {
+            dataSymbols.push((b >> 6) & 0x03);
+            dataSymbols.push((b >> 4) & 0x03);
+            dataSymbols.push((b >> 2) & 0x03);
+            dataSymbols.push(b & 0x03);
+        }
+        
+        const symbols = headerSymbols.concat(dataSymbols);
+        
+        // Pad Frame
+        const totalCells = GRID_W * GRID_H;
+        while (symbols.length < totalCells) symbols.push(0);
+        
+        // --- DRAWING LOGIC (With Alignment Border) ---
+        const CELL_SIZE = 12;
+        const BORDER = 1;
+        const TOTAL_W = GRID_W + 2 * BORDER;
+        const TOTAL_H = GRID_H + 2 * BORDER;
+        
+        // Resize canvas to ensure pixel-perfect rendering
+        if (ctx.canvas.width !== TOTAL_W * CELL_SIZE) {
+            ctx.canvas.width = TOTAL_W * CELL_SIZE;
+            ctx.canvas.height = TOTAL_H * CELL_SIZE;
+        }
+        
+        // Fill Background (Black)
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        
+        // Draw Alignment Border (White)
+        ctx.fillStyle = '#FFFFFF';
+        // Top
+        ctx.fillRect(0, 0, ctx.canvas.width, CELL_SIZE);
+        // Bottom
+        ctx.fillRect(0, ctx.canvas.height - CELL_SIZE, ctx.canvas.width, CELL_SIZE);
+        // Left
+        ctx.fillRect(0, 0, CELL_SIZE, ctx.canvas.height);
+        // Right
+        ctx.fillRect(ctx.canvas.width - CELL_SIZE, 0, CELL_SIZE, ctx.canvas.height);
+        
+        // Draw Corner Anchors (Red)
+        ctx.fillStyle = '#FF0000';
+        // TL
+        ctx.fillRect(0, 0, CELL_SIZE, CELL_SIZE);
+        // TR
+        ctx.fillRect(ctx.canvas.width - CELL_SIZE, 0, CELL_SIZE, CELL_SIZE);
+        // BL
+        ctx.fillRect(0, ctx.canvas.height - CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        // BR
+        ctx.fillRect(ctx.canvas.width - CELL_SIZE, ctx.canvas.height - CELL_SIZE, CELL_SIZE, CELL_SIZE);
+        
+        // Draw Data Grid
+        for (let y = 0; y < GRID_H; y++) {
+            for (let x = 0; x < GRID_W; x++) {
+                const sym = symbols[y * GRID_W + x];
+                const col = PALETTE[sym];
+                ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+                // Offset by BORDER
+                ctx.fillRect((x + BORDER) * CELL_SIZE, (y + BORDER) * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+        }
+    }
+
+    function togglePlay() {
+        if (senderTimer) {
+            clearInterval(senderTimer);
+            senderTimer = null;
+            document.getElementById('btnPlay').innerText = "Play";
+        } else {
+            senderTimer = setInterval(nextFrame, 1000 / senderFps);
+            document.getElementById('btnPlay').innerText = "Pause";
+        }
+    }
+
+    function nextFrame() {
+        senderIdx = (senderIdx + 1) % senderFrames.length;
+        renderFrame();
+    }
+    
+    function prevFrame() {
+        senderIdx = (senderIdx - 1 + senderFrames.length) % senderFrames.length;
+        renderFrame();
+    }
+
+    function updateFps() {
+        senderFps = document.getElementById('fpsRange').value;
+        document.getElementById('fpsLabel').innerText = senderFps + " FPS";
+        if (senderTimer) togglePlay(); // Restart
+        if (senderTimer) togglePlay();
+    }
+
+
+    // --- RECEIVER LOGIC ---
+    let rxStream = null;
+    let isScanning = false;
+    let rxManifest = null;
+    let rxChunks = {};
+    let rxExpected = 0;
+    let rxDownloadTriggered = false;
+    
+    // Corner Pinning State (Normalized 0.0 - 1.0)
+    // TL, TR, BR, BL
+    let corners = [
+        {x: 0.1, y: 0.1}, 
+        {x: 0.9, y: 0.1}, 
+        {x: 0.9, y: 0.9}, 
+        {x: 0.1, y: 0.9}
+    ];
+    let activeCorner = -1;
+
+    function resetCorners() {
+        corners = [
+            {x: 0.1, y: 0.1}, 
+            {x: 0.9, y: 0.1}, 
+            {x: 0.9, y: 0.9}, 
+            {x: 0.1, y: 0.9}
+        ];
+    }
+
+    function snapCorners() {
+        corners = [
+            {x: 0.0, y: 0.0}, 
+            {x: 1.0, y: 0.0}, 
+            {x: 1.0, y: 1.0}, 
+            {x: 0.0, y: 1.0}
+        ];
+    }
+
+    // Touch/Mouse Handling for Corners
+    const overlay = document.getElementById('overlay-canvas');
+    
+    function getEventPos(e) {
+        const rect = overlay.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+            x: (clientX - rect.left) / rect.width,
+            y: (clientY - rect.top) / rect.height
+        };
+    }
+
+    function handleStart(e) {
+        e.preventDefault();
+        const pos = getEventPos(e);
+        // Find closest corner
+        let minD = 0.15; // Threshold increased for easier grabbing
+        activeCorner = -1;
+        corners.forEach((c, i) => {
+            const d = Math.sqrt(Math.pow(c.x - pos.x, 2) + Math.pow(c.y - pos.y, 2));
+            if (d < minD) {
+                minD = d;
+                activeCorner = i;
+            }
+        });
+    }
+
+    function handleMove(e) {
+        e.preventDefault();
+        if (activeCorner !== -1) {
+            const pos = getEventPos(e);
+            corners[activeCorner] = pos;
+        }
+    }
+
+    function handleEnd(e) {
+        e.preventDefault();
+        activeCorner = -1;
+    }
+
+    overlay.addEventListener('mousedown', handleStart);
+    overlay.addEventListener('mousemove', handleMove);
+    overlay.addEventListener('mouseup', handleEnd);
+    overlay.addEventListener('touchstart', handleStart, {passive: false});
+    overlay.addEventListener('touchmove', handleMove, {passive: false});
+    overlay.addEventListener('touchend', handleEnd);
+
+    async function toggleCamera() {
+        const btn = document.getElementById('btnCamera');
+        const video = document.getElementById('video');
+        const img = document.getElementById('rx-image');
+        
+        if (rxStream) {
+            rxStream.getTracks().forEach(track => track.stop());
+            rxStream = null;
+            video.srcObject = null;
+            btn.innerText = "Start Camera";
+            btn.classList.add('primary');
+            btn.style.background = "";
+        } else {
+            try {
+                // Hide image, show video
+                img.style.display = 'none';
+                video.style.display = 'block';
+                
+                rxStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                video.srcObject = rxStream;
+                btn.innerText = "Stop Camera";
+                btn.classList.remove('primary');
+                btn.style.background = "#d32f2f";
+            } catch (e) {
+                showToast("Camera failed: " + e);
+            }
+        }
+    }
+
+    async function handleRxUpload(input) {
+        if (!input.files.length) return;
+        
+        // Stop camera if running
+        if (rxStream) toggleCamera();
+        
+        const files = Array.from(input.files);
+        // Clear input so same files can be selected again
+        input.value = '';
+        
+        log(`Batch Upload: ${files.length} files selected.`);
+        showToast(`Processing ${files.length} files...`);
+        
+        let processed = 0;
+        let successes = 0;
+        
+        // Sort files by name to ensure order (frame_0, frame_1...)
+        files.sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}));
+
+        for (const file of files) {
+            if (rxDownloadTriggered) {
+                log("Download triggered, stopping batch processing.");
+                break; // Stop if already done
+            }
+            
+            try {
+                log(`Processing file: ${file.name}`);
+                await processSingleFile(file);
+                processed++;
+                
+                // Yield to UI
+                await new Promise(r => setTimeout(r, 0));
+                
+                // Only update status if we haven't found the manifest yet, 
+                // otherwise analyzeImage gives better info
+                if (rxExpected === 0) {
+                     document.getElementById('rxStatus').innerText = `Processing Batch: ${processed}/${files.length}`;
+                }
+            } catch (e) {
+                console.error("Error processing file:", e);
+                log("Error: " + e.message);
+            }
+        }
+        
+        log(`Batch Complete. Processed: ${processed}.`);
+        showToast(`Batch Complete. Processed: ${processed}.`);
+    }
+
+    function processSingleFile(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // Draw to offscreen canvas to get data
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    // 1. Force Perfect Alignment for Uploaded Files
+                    // User requested to use image size (implying perfect frames).
+                    // We assume standard generated frames with 1-cell border.
+                    const totalW = GRID_W + 2;
+                    const totalH = GRID_H + 2;
+                    const bW = 1 / totalW;
+                    const bH = 1 / totalH;
+                    
+                    corners = [
+                        {x: bW, y: bH},
+                        {x: 1 - bW, y: bH},
+                        {x: 1 - bW, y: 1 - bH},
+                        {x: bW, y: 1 - bH}
+                    ];
+                    
+                    log(`Using perfect alignment for ${file.name}`);
+                    
+                    /*
+                    // 1. Auto-Detect Corners (Red Anchors)
+                    if (autoDetectCorners(imgData)) {
+                        console.log(`Corners detected in ${file.name}`);
+                        // If found, we update the global 'corners' state
+                        // But we need to inset them to match Data Grid
+                        insetCorners();
+                    } else {
+                        console.log(`No corners detected in ${file.name}`);
+                    }
+                    */
+                    
+                    // 2. Analyze
+                    const overlay = document.getElementById('overlay-canvas');
+                    const overlayCtx = overlay.getContext('2d');
+                    analyzeImage(imgData, overlayCtx, false);
+                    
+                    // Update UI with last image
+                    const rxImg = document.getElementById('rx-image');
+                    const video = document.getElementById('video');
+                    video.style.display = 'none';
+                    rxImg.style.display = 'block';
+                    rxImg.src = img.src;
+                    
+                    // Update overlay
+                    overlay.width = img.naturalWidth;
+                    overlay.height = img.naturalHeight;
+                    drawOverlay(overlayCtx, overlay.width, overlay.height);
+                    
+                    resolve();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function autoDetectCorners(imgData) {
+        const w = imgData.width;
+        const h = imgData.height;
+        const data = imgData.data;
+        const redPoints = [];
+        
+        // 1. Collect Red Pixels
+        // Red Anchor: (255, 0, 0). Allow some tolerance.
+        for (let y = 0; y < h; y+=4) { // Skip rows for speed
+            for (let x = 0; x < w; x+=4) {
+                const i = (y * w + x) * 4;
+                const r = data[i];
+                const g = data[i+1];
+                const b = data[i+2];
+                
+                // R > 150, G < 80, B < 80
+                if (r > 150 && g < 80 && b < 80) {
+                    redPoints.push({x, y});
+                }
+            }
+        }
+        
+        if (redPoints.length < 20) return false; // Not enough red
+        
+        // 2. K-Means (K=4)
+        // Init centroids at expected corners (0.1, 0.1 etc)
+        let centroids = [
+            {x: w*0.05, y: h*0.05}, {x: w*0.95, y: h*0.05},
+            {x: w*0.95, y: h*0.95}, {x: w*0.05, y: h*0.95}
+        ];
+        
+        for(let iter=0; iter<10; iter++) {
+            const clusters = [[], [], [], []];
+            for(const p of redPoints) {
+                let minDist = Infinity;
+                let bestC = 0;
+                centroids.forEach((c, i) => {
+                    const d = (p.x-c.x)**2 + (p.y-c.y)**2;
+                    if(d < minDist) { minDist = d; bestC = i; }
+                });
+                clusters[bestC].push(p);
+            }
+            
+            let changed = false;
+            clusters.forEach((cluster, i) => {
+                if(cluster.length === 0) return;
+                let sx=0, sy=0;
+                cluster.forEach(p => { sx+=p.x; sy+=p.y; });
+                const nx = sx / cluster.length;
+                const ny = sy / cluster.length;
+                if(Math.abs(nx - centroids[i].x) > 1 || Math.abs(ny - centroids[i].y) > 1) changed = true;
+                centroids[i] = {x: nx, y: ny};
+            });
+            if(!changed) break;
+        }
+        
+        // 3. Sort Centroids to TL, TR, BR, BL
+        centroids.sort((a,b) => a.y - b.y);
+        const top = centroids.slice(0, 2).sort((a,b) => a.x - b.x);
+        const bottom = centroids.slice(2, 4).sort((a,b) => b.x - a.x); // BR, BL (Clockwise: TL, TR, BR, BL)
+        const bottomAsc = centroids.slice(2, 4).sort((a,b) => a.x - b.x); // BL, BR
+        
+        // Order: TL, TR, BR, BL
+        const finalCorners = [
+            top[0],      // TL
+            top[1],      // TR
+            bottomAsc[1], // BR
+            bottomAsc[0]  // BL
+        ];
+        
+        // Normalize
+        corners = finalCorners.map(p => ({x: p.x/w, y: p.y/h}));
+        return true;
+    }
+
+    function insetCorners() {
+        // The detected corners are the CENTROIDS of the 1-cell anchors.
+        // The Data Grid is inset by roughly 0.5 cell from these centroids.
+        // Grid Size: 64x36. Image Size: 66x38 (with border).
+        // Centroids are at 0.5, 0.5 (relative to 66x38 grid).
+        // Data starts at 1.0, 1.0.
+        // Width in cells between centroids: 65.
+        // Width in cells of data: 64.
+        // We need to move corners INWARD by (0.5 / 65) = 1/130 approx 0.007
+        
+        // Let's compute homography or just simple linear inset
+        // Simple inset: Move each corner towards center by factor
+        
+        const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
+        const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
+        
+        // Factor calculation:
+        // Outer Width (Centroid to Centroid) = 65 cells
+        // Inner Width (Data to Data) = 64 cells
+        // Scale = 64 / 65 = 0.9846
+        
+        const scale = GRID_W / (GRID_W + 1); 
+        
+        corners = corners.map(c => ({
+            x: cx + (c.x - cx) * scale,
+            y: cy + (c.y - cy) * scale
+        }));
+    }
+
+    function analyzeImage(imgData, overlayCtx = null, verbose = false) {
+        // 1. Try QR
+        if (!rxManifest) {
+            const code = jsQR(imgData.data, imgData.width, imgData.height);
+            if (code) {
+                try {
+                    const m = JSON.parse(code.data);
+                    if (m.total_chunks) {
+                        log("Manifest Found: " + JSON.stringify(m));
+                        m.filename = m.filename || (m.files && m.files[0] ? m.files[0].path : "unknown.bin");
+                        rxManifest = m;
+                        rxExpected = m.total_chunks;
+                        rxDownloadTriggered = false;
+                        document.getElementById('rxStatus').innerText = `Found: ${rxManifest.filename} (${rxExpected} frames)`;
+                        document.getElementById('progress-container').style.display = 'block';
+                        showToast("Manifest Found: " + m.filename);
+                        
+                        if (overlayCtx) {
+                            overlayCtx.strokeStyle = "#FF3B58";
+                            overlayCtx.lineWidth = 4;
+                            overlayCtx.strokeRect(code.location.topLeftCorner.x, code.location.topLeftCorner.y, 
+                                         code.location.bottomRightCorner.x - code.location.topLeftCorner.x,
+                                         code.location.bottomRightCorner.y - code.location.topLeftCorner.y);
+                        }
+                        
+                        // Check if we already have all chunks!
+                        const count = Object.keys(rxChunks).length;
+                        log(`Manifest loaded. Have ${count}/${rxExpected} chunks.`);
+                        if (rxExpected > 0 && count >= rxExpected) {
+                            finishTransfer();
+                        }
+                        return;
+                    }
+                } catch(e) { console.error("QR Parse Error:", e); }
+            }
+            if (verbose) showToast("No Manifest (QR) found in this frame.");
+        }
+        
+        // 2. Try Grid (Always try, even if no manifest yet)
+        // Use a dummy context for debug if needed, or null
+        const result = decodeGrid(imgData, overlayCtx);
+        if (result.success) {
+            let isDuplicate = !!rxChunks[result.seq];
+            
+            if (!isDuplicate) {
+                log(`Decoded Frame ${result.seq}`);
+                rxChunks[result.seq] = result.payload;
+                const count = Object.keys(rxChunks).length;
+                
+                // Update Status
+                if (rxExpected > 0) {
+                    const pct = Math.floor((count / rxExpected) * 100);
+                    document.getElementById('rxStatus').innerText = `Received Frame ${result.seq} (${count}/${rxExpected})`;
+                    document.getElementById('progress-bar').style.width = `${pct}%`;
+                    
+                    if (count >= rxExpected) {
+                        finishTransfer();
+                    }
+                } else {
+                    // Manifest not found yet, but we have chunks
+                    log(`Buffered Frame ${result.seq} (No Manifest)`);
+                    document.getElementById('rxStatus').innerText = `Received Frame ${result.seq} (Waiting for Manifest...)`;
+                    showToast(`Buffered Frame ${result.seq}`);
+                }
+            } else {
+                if (verbose) log(`Duplicate Frame ${result.seq}`);
+            }
+            
+            if (verbose) {
+                let msg = `Frame ${result.seq} Decoded!`;
+                if (isDuplicate) msg += " (Duplicate)";
+                else if (rxExpected > 0) msg += ` Progress: ${Object.keys(rxChunks).length}/${rxExpected}`;
+                showToast(msg);
+            }
+        } else {
+            if (verbose) {
+                log("Decode failed: " + result.reason);
+                showToast("Decode failed: " + result.reason);
+            }
+        }
+    }
+
+    function finishTransfer() {
+        // document.getElementById('btnSave').disabled = false;
+        document.getElementById('rxStatus').innerText = "Transfer Complete!";
+        isScanning = false;
+        document.getElementById('btnScan').innerText = "Auto Scan";
+        
+        if (!rxDownloadTriggered) {
+            log("Triggering Download...");
+            rxDownloadTriggered = true;
+            showToast("Transfer Complete! Downloading...");
+            downloadFile();
+        }
+    }
+
+    function resetReceiver() {
+        rxManifest = null;
+        rxChunks = {};
+        rxExpected = 0;
+        rxDownloadTriggered = false;
+        document.getElementById('rxStatus').innerText = "Idle";
+        // document.getElementById('btnSave').disabled = true;
+        document.getElementById('progress-container').style.display = 'none';
+        document.getElementById('progress-bar').style.width = '0%';
+        document.getElementById('debug-info').innerText = "";
+    }
+
+    function toggleScan() {
+        isScanning = !isScanning;
+        document.getElementById('btnScan').innerText = isScanning ? "Stop Auto" : "Auto Scan";
+        if (isScanning) requestAnimationFrame(scanLoop);
+    }
+
+    function captureFrame() {
+        const video = document.getElementById('video');
+        const img = document.getElementById('rx-image');
+        let source = null;
+        let w = 0, h = 0;
+        
+        if (rxStream && video.readyState === video.HAVE_ENOUGH_DATA) {
+            source = video;
+            w = video.videoWidth;
+            h = video.videoHeight;
+        } else if (img.style.display !== 'none' && img.src) {
+            source = img;
+            w = img.naturalWidth;
+            h = img.naturalHeight;
+        } else {
+            return showToast("Camera not ready or no image loaded");
+        }
+        
+        // Capture
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(source, 0, 0, w, h);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        
+        // Analyze
+        const overlay = document.getElementById('overlay-canvas');
+        const overlayCtx = overlay.getContext('2d');
+        analyzeImage(imgData, overlayCtx, true);
+    }
+
+    function drawOverlay(ctx, w, h) {
+        ctx.clearRect(0, 0, w, h);
+        
+        // Draw Corners & Edges
+        ctx.strokeStyle = "#00ff00";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x * w, corners[0].y * h);
+        ctx.lineTo(corners[1].x * w, corners[1].y * h);
+        ctx.lineTo(corners[2].x * w, corners[2].y * h);
+        ctx.lineTo(corners[3].x * w, corners[3].y * h);
+        ctx.closePath();
+        ctx.stroke();
+
+        // Draw Handles
+        corners.forEach((c, i) => {
+            ctx.fillStyle = i === activeCorner ? "#ffff00" : "#ff0000";
+            ctx.beginPath();
+            ctx.arc(c.x * w, c.y * h, 10, 0, Math.PI*2);
+            ctx.fill();
+        });
+    }
+
+    function scanLoop() {
+        if (!isScanning && !rxStream) return; // Stop if no camera
+        
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay-canvas');
+        
+        // If using static image, we don't need to loop scan unless we want to animate corners
+        // But scanLoop is primarily for camera.
+        // However, we need to keep drawing the overlay for user interaction even if not scanning.
+        // Let's separate drawing from scanning.
+        
+        if (video.style.display !== 'none' && video.readyState === video.HAVE_ENOUGH_DATA) {
+             // Update Overlay Size
+            if (overlay.width !== video.videoWidth || overlay.height !== video.videoHeight) {
+                overlay.width = video.videoWidth;
+                overlay.height = video.videoHeight;
+            }
+            
+            const ctx = overlay.getContext('2d');
+            drawOverlay(ctx, overlay.width, overlay.height);
+
+            if (isScanning) {
+                // Capture Frame
+                const canvas = document.createElement('canvas'); // Offscreen
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const cCtx = canvas.getContext('2d');
+                cCtx.drawImage(video, 0, 0);
+                const imgData = cCtx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // ... (Scanning Logic) ...
+                // 1. Try QR
+                if (!rxManifest) {
+                    const code = jsQR(imgData.data, imgData.width, imgData.height);
+                    if (code) {
+                        try {
+                            const m = JSON.parse(code.data);
+                            if (m.total_chunks) {
+                                // Normalize filename from Python or JS sender
+                                m.filename = m.filename || (m.files && m.files[0] ? m.files[0].path : "unknown.bin");
+
+                                rxManifest = m;
+                                rxExpected = m.total_chunks;
+                                document.getElementById('rxStatus').innerText = `Found: ${rxManifest.filename} (${rxExpected} chunks)`;
+                                document.getElementById('progress-container').style.display = 'block';
+                                
+                                // Draw QR detection box
+                                ctx.strokeStyle = "#FF3B58";
+                                ctx.lineWidth = 4;
+                                ctx.strokeRect(code.location.topLeftCorner.x, code.location.topLeftCorner.y, 
+                                             code.location.bottomRightCorner.x - code.location.topLeftCorner.x,
+                                             code.location.bottomRightCorner.y - code.location.topLeftCorner.y);
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                // 2. Try Grid (Only if manifest found)
+                if (rxManifest) {
+                    const result = decodeGrid(imgData, ctx); // Pass overlay ctx for debug drawing
+                    if (result.success) {
+                        document.getElementById('debug-info').innerText = `Last: Chunk ${result.seq} OK`;
+                        document.getElementById('debug-info').style.color = "#5f5";
+                        
+                        if (!rxChunks[result.seq]) {
+                            rxChunks[result.seq] = result.payload;
+                            const count = Object.keys(rxChunks).length;
+                            const pct = Math.floor((count / rxExpected) * 100);
+                            
+                            document.getElementById('rxStatus').innerText = `Received Frame ${result.seq} (${count}/${rxExpected})`;
+                            document.getElementById('progress-bar').style.width = `${pct}%`;
+                            
+                            if (rxExpected > 0 && count >= rxExpected) {
+                                // document.getElementById('btnSave').disabled = false;
+                                document.getElementById('rxStatus').innerText = "Transfer Complete!";
+                                isScanning = false;
+                                document.getElementById('btnScan').innerText = "Auto Scan";
+                                
+                                if (!rxDownloadTriggered) {
+                                    console.log("Triggering Download (Scan Loop)...");
+                                    rxDownloadTriggered = true;
+                                    showToast("Transfer Complete! Downloading...");
+                                    downloadFile();
+                                }
+                            }
+                        }
+                    } else {
+                        // Show reason
+                        document.getElementById('debug-info').innerText = result.reason;
+                        document.getElementById('debug-info').style.color = "#f55";
+                    }
+                }
+            }
+        } else {
+            // Static image mode or idle
+            // Just draw overlay if image is present
+            const img = document.getElementById('rx-image');
+            if (img.style.display !== 'none') {
+                 const ctx = overlay.getContext('2d');
+                 drawOverlay(ctx, overlay.width, overlay.height);
+            }
+        }
+        
+        requestAnimationFrame(scanLoop);
+    }
+
+    function decodeGrid(imgData, debugCtx) {
+        const w = imgData.width;
+        const h = imgData.height;
+        
+        const showGrid = document.getElementById('chkDebug').checked;
+        const lowLight = document.getElementById('chkBoost').checked;
+        const boost = lowLight ? 2.5 : 1.0; // Significant boost for dim screens
+
+        const symbols = [];
+        
+        // Helper for Perspective Corrected Sampling (Homography)
+        // Maps unit square (u,v) to quad (x,y)
+        const x0 = corners[0].x * w, y0 = corners[0].y * h;
+        const x1 = corners[1].x * w, y1 = corners[1].y * h;
+        const x2 = corners[2].x * w, y2 = corners[2].y * h;
+        const x3 = corners[3].x * w, y3 = corners[3].y * h;
+        
+        let a, b, c, d, e, f, g, h_coeff;
+        let useHomography = false;
+        
+        const dx1 = x1 - x2;
+        const dy1 = y1 - y2;
+        const dx2 = x3 - x2;
+        const dy2 = y3 - y2;
+        const sx = x0 - x1 + x2 - x3;
+        const sy = y0 - y1 + y2 - y3;
+        
+        const det = dx1 * dy2 - dx2 * dy1;
+        
+        if (det !== 0) {
+            g = (sx * dy2 - sy * dx2) / det;
+            h_coeff = (sy * dx1 - sx * dy1) / det;
+            a = x1 - x0 + g * x1;
+            b = x3 - x0 + h_coeff * x3;
+            c = x0;
+            d = y1 - y0 + g * y1;
+            e = y3 - y0 + h_coeff * y3;
+            f = y0;
+            useHomography = true;
+        }
+
+        function getSamplePoint(u, v) {
+            if (useHomography) {
+                const den = g * u + h_coeff * v + 1;
+                return {
+                    x: Math.floor((a * u + b * v + c) / den),
+                    y: Math.floor((d * u + e * v + f) / den)
+                };
+            } else {
+                // Fallback to Bilinear
+                const tx = corners[0].x * (1-u) + corners[1].x * u;
+                const ty = corners[0].y * (1-u) + corners[1].y * u;
+                const bx = corners[3].x * (1-u) + corners[2].x * u;
+                const by = corners[3].y * (1-u) + corners[2].y * u;
+                const x = tx * (1-v) + bx * v;
+                const y = ty * (1-v) + by * v;
+                return {x: Math.floor(x * w), y: Math.floor(y * h)};
+            }
+        }
+
+        // Debug drawing setup
+        if (debugCtx) {
+            debugCtx.fillStyle = "rgba(255, 255, 0, 0.5)";
+        }
+
+        for (let y = 0; y < GRID_H; y++) {
+            for (let x = 0; x < GRID_W; x++) {
+                // Normalized coordinates for center of cell
+                const u = (x + 0.5) / GRID_W;
+                const v = (y + 0.5) / GRID_H;
+                
+                const pt = getSamplePoint(u, v);
+                const px = pt.x;
+                const py = pt.y;
+                
+                // Sample 3x3 area
+                let r=0, g=0, b=0;
+                let count = 0;
+                for(let dy=-1; dy<=1; dy++) {
+                    for(let dx=-1; dx<=1; dx++) {
+                        const idx = ((py+dy) * w + (px+dx)) * 4;
+                        if (idx >= 0 && idx < imgData.data.length) {
+                            r += imgData.data[idx];
+                            g += imgData.data[idx+1];
+                            b += imgData.data[idx+2];
+                            count++;
+                        }
+                    }
+                }
+                r = Math.round(r/count);
+                g = Math.round(g/count);
+                b = Math.round(b/count);
+                
+                // Apply Boost
+                if (lowLight) {
+                    r = Math.min(255, r * boost);
+                    g = Math.min(255, g * boost);
+                    b = Math.min(255, b * boost);
+                }
+
+                // Closest palette color
+                let bestSym = 0;
+                let minDist = Infinity;
+                PALETTE.forEach((col, i) => {
+                    const d = Math.pow(r-col[0], 2) + Math.pow(g-col[1], 2) + Math.pow(b-col[2], 2);
+                    if (d < minDist) {
+                        minDist = d;
+                        bestSym = i;
+                    }
+                });
+                symbols.push(bestSym);
+
+                // Debug Visualization
+                if (debugCtx && showGrid) {
+                    // Draw every 2nd cell to save perf, or all if needed
+                    // Drawing all gives better feedback on "what the phone sees"
+                    if (x % 2 === 0 && y % 2 === 0) {
+                        const detectedCol = PALETTE[bestSym];
+                        debugCtx.fillStyle = `rgba(${detectedCol[0]}, ${detectedCol[1]}, ${detectedCol[2]}, 0.8)`;
+                        debugCtx.fillRect(px - 2, py - 2, 4, 4);
+                    }
+                }
+            }
+        }
+        
+        // Reconstruct bytes
+        // We need to respect HEADER_ROWS padding
+        const headerCapacity = GRID_W * HEADER_ROWS;
+        
+        // 1. Extract Header Bytes
+        const headerSymbols = symbols.slice(0, headerCapacity);
+        const headerBytes = [];
+        for (let i = 0; i < headerSymbols.length; i += 4) {
+            let val = 0;
+            if (i < headerSymbols.length) val |= (headerSymbols[i] << 6);
+            if (i+1 < headerSymbols.length) val |= (headerSymbols[i+1] << 4);
+            if (i+2 < headerSymbols.length) val |= (headerSymbols[i+2] << 2);
+            if (i+3 < headerSymbols.length) val |= headerSymbols[i+3];
+            headerBytes.push(val);
+        }
+        const u8Header = new Uint8Array(headerBytes);
+        
+        // Parse Header (18 bytes)
+        if (u8Header.length < 18) return { success: false, reason: "Header Short" };
+        
+        const view = new DataView(u8Header.buffer);
+        const magic = view.getUint16(0, false);
+        
+        // Enhanced Debug for Magic
+        if (magic !== MAGIC) {
+            return { success: false, reason: `No Magic (Got 0x${magic.toString(16).toUpperCase()})` };
+        }
+        
+        const seq = view.getUint32(2, false);
+        const chunkIdx = view.getUint32(6, false);
+        const len = view.getUint32(10, false);
+        const storedCrc = view.getUint32(14, false);
+        
+        // Verify CRC
+        const headerOnly = u8Header.slice(0, 14);
+        const calcCrc = crc32(headerOnly);
+        if (calcCrc !== storedCrc) return { success: false, reason: `CRC Fail: ${calcCrc.toString(16)} != ${storedCrc.toString(16)}` };
+        
+        // 2. Extract Payload Bytes
+        const dataSymbols = symbols.slice(headerCapacity);
+        const dataBytes = [];
+        for (let i = 0; i < dataSymbols.length; i += 4) {
+            let val = 0;
+            if (i < dataSymbols.length) val |= (dataSymbols[i] << 6);
+            if (i+1 < dataSymbols.length) val |= (dataSymbols[i+1] << 4);
+            if (i+2 < dataSymbols.length) val |= (dataSymbols[i+2] << 2);
+            if (i+3 < dataSymbols.length) val |= dataSymbols[i+3];
+            dataBytes.push(val);
+        }
+        const u8Data = new Uint8Array(dataBytes);
+        
+        // Extract Payload
+        if (len > u8Data.length) return { success: false, reason: "Len Mismatch" };
+        const payload = u8Data.slice(0, len);
+        
+        return { success: true, seq, chunkIdx, payload };
+    }
+
+    function downloadFile() {
+        log("Starting downloadFile()...");
+        if (!rxManifest) {
+            console.warn("No manifest found, using default filename.");
+            rxManifest = { filename: 'download.bin' };
+        }
+        
+        try {
+            // Reassemble
+            const sortedKeys = Object.keys(rxChunks).map(Number).sort((a,b) => a-b);
+            log(`Reassembling ${sortedKeys.length} chunks...`);
+            
+            const totalLen = sortedKeys.reduce((acc, k) => acc + rxChunks[k].length, 0);
+            log(`Total length: ${totalLen} bytes.`);
+            
+            const finalBytes = new Uint8Array(totalLen);
+            
+            let offset = 0;
+            for (let k of sortedKeys) {
+                finalBytes.set(rxChunks[k], offset);
+                offset += rxChunks[k].length;
+            }
+            
+            const blob = new Blob([finalBytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            log(`Blob created: ${url}`);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = rxManifest.filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            log("Download triggered successfully.");
+        } catch (e) {
+            console.error("Download failed:", e);
+            log("Download Error: " + e.message);
+            showToast("Download Error: " + e.message);
+        }
+    }
+
+</script>
+
+</body>
+</html>

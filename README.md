@@ -20,6 +20,23 @@ This project enables transferring arbitrary files/folders of any size using only
 
 ## Usage
 
+### Mobile Support (Offline Web App)
+
+To run the app on a mobile device without any network connection to the PC:
+
+**Option A: GitHub Pages (Recommended)**
+1.  Enable GitHub Pages in your repository settings and set the source to the `/docs` folder.
+2.  Visit `https://<your-username>.github.io/<repo-name>/` on your mobile device.
+3.  The app works offline once loaded (ensure you have cached it or saved it).
+
+**Option B: Local File**
+1.  Copy `docs/index.html` to your mobile device.
+2.  Open it directly in your browser.
+3.  **Sender Mode**: Load a file and place your phone screen in front of the Receiver's camera.
+4.  **Receiver Mode**: Use your phone's camera to capture frames from the Sender's screen.
+
+*Note: The HTML file uses CDN links for QR libraries. For a completely offline experience, you may need to cache the page while online once, or download the JS dependencies locally.*
+
 ### GUI Applications (Recommended)
 
 Launch the unified runner:
@@ -79,7 +96,7 @@ Decodes a folder of captured/generated images and reconstructs the file.
 - [x] QR & Grid Encoding
 - [x] Grid Decoding
 - [x] Sender & Receiver GUI
-- [ ] Automatic Frame Detection & Auto-Decode Loop
+- [x] Automatic Frame Detection & Auto-Decode Loop
 - [ ] Reed-Solomon FEC (currently simple parity)
 - [ ] Advanced Color Calibration
 - [ ] Encryption (AEAD)

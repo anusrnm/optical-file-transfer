@@ -7,6 +7,11 @@ PALETTE_4 = [(0,0,0),(255,255,255),(255,0,0),(0,255,0)]  # 2 bits per symbol
 HEADER_ROWS = 2
 MAGIC = 0xABCD
 
+GRID_W = 64
+GRID_H = 36
+BITS_PER_SYMBOL = 2
+FRAME_PAYLOAD_SIZE = (GRID_W * (GRID_H - HEADER_ROWS) * BITS_PER_SYMBOL) // 8
+
 def pack_header(seq: int, chunk_idx: int, payload_len: int) -> bytes:
     """Pack header: magic(2), seq(4), chunk_idx(4), payload_len(4), crc(4). Total 18 bytes."""
     fmt = '>HIII'
@@ -34,7 +39,7 @@ def _bytes_to_symbols(data: bytes, bits_per_symbol: int = 2) -> list:
     return symbols
 
 
-def encode_grid_frame(chunk_bytes: bytes, seq: int, chunk_idx: int, grid_w: int = 64, grid_h: int = 36, bits_per_symbol: int = 2) -> Image:
+def encode_grid_frame(chunk_bytes: bytes, seq: int, chunk_idx: int, grid_w: int = GRID_W, grid_h: int = GRID_H, bits_per_symbol: int = BITS_PER_SYMBOL) -> Image:
     """Create a PNG image with embedded header and chunk data."""
     header_bytes = pack_header(seq, chunk_idx, len(chunk_bytes))
     
@@ -70,15 +75,42 @@ def encode_grid_frame(chunk_bytes: bytes, seq: int, chunk_idx: int, grid_w: int 
         all_symbols = all_symbols[:total_capacity]
 
     cell = 12  # pixel size per symbol
-    img_w = grid_w * cell
-    img_h = grid_h * cell
-    img = Image.new('RGB', (img_w, img_h), (32,32,32))
+    
+    # Add 1-cell border for alignment
+    border = 1
+    img_w = (grid_w + 2 * border) * cell
+    img_h = (grid_h + 2 * border) * cell
+    
+    img = Image.new('RGB', (img_w, img_h), (0,0,0))
     draw = ImageDraw.Draw(img)
+    
+    # Draw Alignment Border (White)
+    # Top
+    draw.rectangle([0, 0, img_w-1, cell-1], fill=(255,255,255))
+    # Bottom
+    draw.rectangle([0, img_h-cell, img_w-1, img_h-1], fill=(255,255,255))
+    # Left
+    draw.rectangle([0, 0, cell-1, img_h-1], fill=(255,255,255))
+    # Right
+    draw.rectangle([img_w-cell, 0, img_w-1, img_h-1], fill=(255,255,255))
+    
+    # Draw Corner Anchors (Red)
+    # TL
+    draw.rectangle([0, 0, cell-1, cell-1], fill=(255,0,0))
+    # TR
+    draw.rectangle([img_w-cell, 0, img_w-1, cell-1], fill=(255,0,0))
+    # BL
+    draw.rectangle([0, img_h-cell, cell-1, img_h-1], fill=(255,0,0))
+    # BR
+    draw.rectangle([img_w-cell, img_h-cell, img_w-1, img_h-1], fill=(255,0,0))
     
     for y in range(grid_h):
         for x in range(grid_w):
             sym = all_symbols[y * grid_w + x]
             color = PALETTE_4[sym % len(PALETTE_4)]
-            draw.rectangle([x*cell, y*cell, (x+1)*cell-1, (y+1)*cell-1], fill=color)
+            # Offset by border
+            dx = x + border
+            dy = y + border
+            draw.rectangle([dx*cell, dy*cell, (dx+1)*cell-1, (dy+1)*cell-1], fill=color)
             
     return img

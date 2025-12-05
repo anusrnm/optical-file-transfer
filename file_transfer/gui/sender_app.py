@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QPushButton, QLabel, QFileDialog, 
                                QSlider, QProgressBar, QSizePolicy)
 from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QKeyEvent
 
 
 # Import core logic
@@ -41,6 +41,16 @@ class SenderApp(QMainWindow):
         self.top_layout.addWidget(self.lbl_file)
         self.layout.addLayout(self.top_layout)
         
+        # Metadata display
+        self.meta_layout = QHBoxLayout()
+        self.lbl_filename = QLabel("File: -")
+        self.lbl_size = QLabel("Size: -")
+        self.lbl_total_frames = QLabel("Total Frames: -")
+        self.meta_layout.addWidget(self.lbl_filename)
+        self.meta_layout.addWidget(self.lbl_size)
+        self.meta_layout.addWidget(self.lbl_total_frames)
+        self.layout.addLayout(self.meta_layout)
+        
         # Image display
         self.lbl_display = QLabel()
         self.lbl_display.setAlignment(Qt.AlignCenter)
@@ -51,20 +61,34 @@ class SenderApp(QMainWindow):
         # Playback controls
         self.controls_layout = QHBoxLayout()
         
+        self.btn_prev = QPushButton("<")
+        self.btn_prev.setFixedWidth(40)
+        self.btn_prev.clicked.connect(self.prev_frame)
+        
+        self.btn_next = QPushButton(">")
+        self.btn_next.setFixedWidth(40)
+        self.btn_next.clicked.connect(self.manual_next_frame)
+
         self.slider_fps = QSlider(Qt.Horizontal)
         self.slider_fps.setRange(1, 30)
         self.slider_fps.setValue(5)
         self.lbl_fps = QLabel("5 FPS")
         self.slider_fps.valueChanged.connect(lambda v: self.lbl_fps.setText(f"{v} FPS"))
         
+        self.controls_layout.addWidget(self.btn_prev)
+        self.controls_layout.addWidget(self.btn_next)
         self.controls_layout.addWidget(QLabel("Speed:"))
         self.controls_layout.addWidget(self.slider_fps)
         self.controls_layout.addWidget(self.lbl_fps)
         self.layout.addLayout(self.controls_layout)
         
         # Progress
+        self.progress_layout = QHBoxLayout()
+        self.lbl_counter = QLabel("Frame: 0/0")
         self.progress = QProgressBar()
-        self.layout.addWidget(self.progress)
+        self.progress_layout.addWidget(self.lbl_counter)
+        self.progress_layout.addWidget(self.progress)
+        self.layout.addLayout(self.progress_layout)
         
         # State
         self.file_path = None
@@ -89,8 +113,14 @@ class SenderApp(QMainWindow):
         self.lbl_display.setText("Generating frames...")
         QApplication.processEvents()
         
+        # Update metadata
+        size_bytes = os.path.getsize(self.file_path)
+        self.lbl_filename.setText(f"File: {os.path.basename(self.file_path)}")
+        self.lbl_size.setText(f"Size: {size_bytes} bytes")
+        
         # 1. Manifest & QR
-        manifest = build_manifest(self.file_path)
+        # We must use FRAME_PAYLOAD_SIZE as chunk_size so the manifest total_chunks matches the number of frames we generate
+        manifest = build_manifest(self.file_path, chunk_size=FRAME_PAYLOAD_SIZE)
         for idx, qr in manifest_to_qr_frames(manifest):
             # Convert segno QR to PIL Image
             import io
@@ -113,10 +143,13 @@ class SenderApp(QMainWindow):
                 self.frames.append(img)
                 frame_seq += 1
 
-                
-        self.lbl_display.setText(f"Ready: {len(self.frames)} frames generated.")
+        self.lbl_total_frames.setText(f"Total Frames: {len(self.frames)}")
         self.progress.setMaximum(len(self.frames))
-        self.progress.setValue(0)
+        
+        # Show first frame immediately (QR)
+        if self.frames:
+            self.current_frame_idx = 0
+            self.next_frame() # Displays frame 0, increments idx to 1
 
     @Slot()
     def start_transfer(self):
@@ -133,6 +166,73 @@ class SenderApp(QMainWindow):
             self.btn_start.setText("Pause Transfer")
             self.is_running = True
 
+    @Slot()
+    def prev_frame(self):
+        if not self.frames: return
+        # Pause if running
+        if self.is_running:
+            self.start_transfer() # Toggles to pause
+            
+        self.current_frame_idx = (self.current_frame_idx - 1 + len(self.frames)) % len(self.frames)
+        self.display_current_frame()
+
+    @Slot()
+    def manual_next_frame(self):
+        if not self.frames: return
+        # Pause if running
+        if self.is_running:
+            self.start_transfer() # Toggles to pause
+        self.next_frame()
+
+    @Slot()
+    def go_to_first_frame(self):
+        if not self.frames: return
+        # Pause if running
+        if self.is_running:
+            self.start_transfer() # Toggles to pause
+        self.current_frame_idx = 0
+        self.display_current_frame()
+
+    @Slot()
+    def go_to_last_frame(self):
+        if not self.frames: return
+        # Pause if running
+        if self.is_running:
+            self.start_transfer() # Toggles to pause
+        self.current_frame_idx = len(self.frames) - 1
+        self.display_current_frame()
+
+    def display_current_frame(self):
+        if self.current_frame_idx >= len(self.frames):
+            self.current_frame_idx = 0
+            
+        pil_img = self.frames[self.current_frame_idx]
+        
+        # Convert PIL to QPixmap
+        data = pil_img.convert("RGBA").tobytes("raw", "RGBA")
+        qimg = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimg)
+        
+        # Scale to fit label
+        scaled_pixmap = pixmap.scaled(self.lbl_display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.lbl_display.setPixmap(scaled_pixmap)
+        self.progress.setValue(self.current_frame_idx + 1)
+        self.lbl_counter.setText(f"Frame: {self.current_frame_idx + 1}/{len(self.frames)}")
+        
+        # Don't increment here, since we're manually setting the frame
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key_Left:
+            self.prev_frame()
+        elif event.key() == Qt.Key_Right:
+            self.manual_next_frame()
+        elif event.key() == Qt.Key_Up:
+            self.go_to_first_frame()
+        elif event.key() == Qt.Key_Down:
+            self.go_to_last_frame()
+        else:
+            super().keyPressEvent(event)
+
     def next_frame(self):
         if self.current_frame_idx >= len(self.frames):
             self.current_frame_idx = 0  # Loop or stop? Let's loop for now
@@ -148,6 +248,7 @@ class SenderApp(QMainWindow):
         scaled_pixmap = pixmap.scaled(self.lbl_display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.lbl_display.setPixmap(scaled_pixmap)
         self.progress.setValue(self.current_frame_idx + 1)
+        self.lbl_counter.setText(f"Frame: {self.current_frame_idx + 1}/{len(self.frames)}")
         
         self.current_frame_idx += 1
 

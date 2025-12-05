@@ -39,7 +39,7 @@ def main():
     ap.add_argument('--out', required=True, help='Output directory for frames')
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    manifest = build_manifest(args.input)
+    manifest = build_manifest(args.input, chunk_size=FRAME_PAYLOAD_SIZE)
     save_manifest(manifest, os.path.join(args.out, 'manifest.json'))
     write_qr_frames(manifest, args.out)
     # For prototype: if input is a file, create grid frames; if folder, skip for now

@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code File Transfer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --bg-grad-start: #0f1115;
+            --bg-grad-end: #161b22;
+            --panel: #1d2127;
+            --panel-alt: #242a2f;
+            --border: #343b44;
+            --accent1: #2563eb;
+            --accent2: #1d4ed8;
+            --accent-hover: #3b82f6;
+            --text: #e2e6ea;
+            --text-muted: #9ba3af;
+            --danger: #dc3545;
+            --danger-hover: #c82333;
+            --success: #2eaf5d;
+            --progress-bg: #2a3037;
+            --shadow: 0 4px 18px rgba(0,0,0,0.45);
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, var(--bg-grad-start) 0%, var(--bg-grad-end) 100%);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 5px;
+        }
+
+        .container {
+            margin: 0 auto;
+            background: var(--panel);
+            border-radius: 15px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+            overflow: visible;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--panel-alt);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 16px 18px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 1.05em;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: background .25s, color .25s;
+            border: none;
+            background: none;
+        }
+
+        .tab:hover {
+            background: #2a3037;
+            color: var(--text);
+        }
+
+        .tab.active {
+            color: var(--accent1);
+            background: var(--panel);
+            border-bottom: 3px solid var(--accent1);
+        }
+
+        .content {
+            padding: 2px;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        #receiver.active {
+            padding-bottom: 80px; /* Space for fixed receiver controls */
+        }
+
+        .upload-area {
+            border: 2px dashed var(--accent1);
+            border-radius: 10px;
+            padding: 2px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 15px;
+            background: #1b1f24;
+        }
+
+        .upload-area:hover {
+            background: #222831;
+            border-color: var(--accent2);
+        }
+
+        .upload-area.dragover {
+            background: #262e38;
+            border-color: var(--accent2);
+            transform: scale(1.02);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--accent1) 0%, var(--accent2) 100%);
+            color: #ffffff;
+            border: 1px solid var(--accent1);
+            padding: 14px 34px;
+            font-size: 1.05em;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.25s;
+            font-weight: 600;
+            margin: 8px 4px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+            filter: brightness(1.07);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #49515a;
+            border: 1px solid #49515a;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            border: 1px solid var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger-hover);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.45);
+        }
+
+        .qr-display {
+            text-align: center;
+            background: var(--panel-alt);
+            padding: 2px;
+            border-radius: 8px;
+            margin: 0 0 2px 0;
+            border: 2px solid var(--accent1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            /* Fixed height to prevent layout shift & scrollbars */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            overflow: hidden; /* hide any accidental overflow */
+        }
+
+        #qrcode {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            background: #ffffff; /* keep white for QR contrast */
+            border-radius: 8px;
+            padding: 6px; /* reduced padding to fit larger canvas */
+            flex: 0 0 auto; /* prevent stretching */
+        }
+
+        #qrcode img {
+            width: 100% !important;
+            height: auto !important;
+            max-width: 256px;
+            aspect-ratio: 1 / 1;
+            image-rendering: pixelated;
+        }
+
+        @media (max-width: 768px) {
+
+            .controls {
+                flex-direction: column;
+            }
+            /* Keep receiver controls on a single horizontal line on narrow screens */
+            .receiver-controls {
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                overflow-x: auto; /* allow horizontal scroll if truly cramped */
+                -webkit-overflow-scrolling: touch;
+            }
+            .receiver-controls .btn {
+                flex: 0 0 auto;
+                padding: 6px 12px; /* slightly tighter on narrow screens */
+                font-size: 1.1em;
+                margin: 2px 2px;
+            }
+
+            .btn {
+                width: 100%;
+                padding: 12px 20px;
+                font-size: 1em;
+            }
+
+            .upload-area {
+                padding: 2px;
+            }
+
+            .upload-area h2 {
+                font-size: 1.2em;
+            }
+
+            .tab {
+                padding: 12px 10px;
+                font-size: 0.95em;
+            }
+        }
+
+        .controls {
+            display: flex;
+            justify-content: flex-start; /* align content to the left to avoid off-screen centering */
+            align-items: flex-start;
+            gap: 12px;
+            margin: 2px 0;
+            flex-wrap: wrap;
+            width: 100%;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: var(--progress-bg);
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 6px 0;
+            position: relative;
+            border: 1px solid var(--border);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent1) 0%, var(--accent2) 100%);
+            transition: width 0.2s;
+        }
+
+        .progress-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.60em;
+            color: #ffffff;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+            letter-spacing: .5px;
+        }
+
+        #video {
+            width: 100%;
+            max-width: 300px; /* Match QR max width */
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            background: #000; /* true black for camera feed area */
+        }
+
+        .camera-container {
+            text-align: center;
+            background: var(--panel-alt);
+            padding: 2px;
+            border-radius: 8px;
+            margin: 0 0 2px 0;
+            border: 2px solid var(--accent1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .camera-container.detecting {
+            border-color: var(--danger);
+        }
+
+        .camera-container.detected {
+            border-color: var(--success);
+        }
+
+        canvas {
+            display: none;
+        }
+
+        #debug-image-container {
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        #debug-image {
+            border-radius: 4px;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-weight: 600;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .chunk-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .chunk-card {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            border-left: 3px solid #667eea;
+            font-size: 0.9em;
+        }
+
+        .chunk-card strong {
+            color: #667eea;
+        }
+
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: flex-start; /* left align controls */
+            flex-wrap: wrap; /* wrap long controls like sliders */
+        }
+
+        .speed-control label {
+            font-weight: 600;
+        }
+
+        .speed-control input[type="range"] {
+            width: 200px;
+        }
+
+        .chunk-nav {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin: 2px 0;
+        }
+
+        .chunk-nav button {
+            background: #667eea;
+            color: var(--panel);
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .chunk-nav button:hover {
+            background: #5568d3;
+        }
+
+        /* Receiver controls: align button sizing with sender chunk-nav icon buttons */
+        .receiver-controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            padding: 12px;
+            z-index: 100;
+            flex-wrap: nowrap !important;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .receiver-controls .btn {
+            padding: 8px 15px;
+            font-size: 1.2em;
+            margin: 2px 4px;
+            font-weight: bold;
+            width: auto; /* avoid stretching full width on some mobile browsers */
+        }
+
+        .receiver-controls .btn.btn-secondary {
+            background: #667eea;
+            border: none;
+        }
+
+        .receiver-controls .btn.btn-secondary:hover {
+            background: #5568d3;
+        }
+
+        .chunks-display {
+            background: #20262d;
+            padding: 8px;
+            border-radius: 6px;
+            margin: 8px 0;
+            font-size: 0.85em;
+            border: 1px solid var(--border);
+        }
+
+        .chunks-display strong {
+            color: var(--accent1);
+        }
+
+        .debug-console {
+            background: #15191e;
+            color: #78d478;
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 0.72em;
+            height: 100px; /* Fixed height */
+            overflow-y: auto;
+            line-height: 1.3;
+            border: 1px solid var(--border);
+            width: 100%;
+        }
+
+        .debug-console div {
+            margin: 2px 0;
+        }
+
+        #downloadLink {
+            display: inline-block;
+            margin: 12px 0;
+            background: linear-gradient(135deg, var(--success) 0%, #3dcf74 100%);
+            border: 1px solid var(--success);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('sender')">📤 Send File</button>
+            <button class="tab" onclick="switchTab('receiver')">📥 Receive File</button>
+        </div>
+        <div id="versionBadge" style="position: fixed; bottom: 8px; right: 8px; z-index: 1000; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 6px 10px; color: var(--text-muted); font-size: 0.85em;">
+            v-
+        </div>
+
+        <div class="content">
+            <!-- SENDER TAB -->
+            <div id="sender" class="tab-content active">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="senderProgress"></div>
+                    <span class="progress-label" id="senderProgressText">0%</span>
+                </div>
+
+                <div class="qr-display">
+                    <div id="qrcode"></div>
+                </div>
+                <div class="controls">
+                    <div id="chunkInfo" style="display:none; margin-top:10px; font-size:0.8em; line-height:1.4; color: var(--text-muted);"></div>
+                    <div class="speed-control" id="encodeCtrl" style="display:none; margin-top:6px; gap:12px;">
+                        <label for="eccSelect">ECC:</label>
+                        <select id="eccSelect" onchange="updateEncodingOptions()">
+                            <option value="L">L (Low)</option>
+                            <option value="M" selected>M (Medium)</option>
+                            <option value="Q">Q (Quartile)</option>
+                            <option value="H">H (High)</option>
+                        </select>
+                        <label for="densitySlider">Density:</label>
+                        <input type="range" id="densitySlider" min="50" max="1000" value="200" step="25" oninput="updateEncodingOptions()">
+                        <span id="densityValue">200 B</span>
+                    </div>
+                    <div class="chunk-nav" id="chunkNav" style="display:none; margin-top:10px;">
+                        <button onclick="prevChunk()">◀</button>
+                        <input type="number" id="chunkInput" min="1" value="1" onchange="goToChunk()">
+                        <span id="chunkTotal">/ 0</span>
+                        <button onclick="nextChunk()">▶</button>
+                        <button id="playPauseBtn" onclick="togglePlayPause()">▶️</button>
+                        <button onclick="resetSender()">🔄</button>
+                    </div>
+                    <div class="speed-control" id="speedCtrl" style="display:none; margin-top:6px;">
+                        <label for="speedSlider">Speed:</label>
+                        <input type="range" id="speedSlider" min="1" max="10" value="5" step="1" oninput="updateSpeedRealtime()">
+                        <span id="speedValue">700ms</span>
+                    </div>
+                </div>
+
+                <div class="debug-console" id="senderDebugConsole" >
+                    <div>Sender Debug Ready...</div>
+                </div>
+
+                <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                    <h2>📁 Choose or Drop File Here</h2>
+                    <p style="margin-top: 10px; color: #6c757d;">Click to browse or drag and drop a file</p>
+                    <input type="file" id="fileInput" onchange="handleFileSelect(event)">
+                </div>
+
+                <!-- fileInfo removed: controls & info moved inside qr-display -->
+            </div>
+
+            <!-- RECEIVER TAB -->
+            <div id="receiver" class="tab-content">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="receiverProgress"></div>
+                    <span class="progress-label" id="receiverProgressText">0%</span>
+                </div>
+
+                <div class="debug-console" id="debugConsole">
+                    <div>Debug Console Ready...</div>
+                </div>
+
+                <div id="scanStatus" style="background: var(--panel-alt); padding: 4px 8px; border-radius: 4px; margin: 4px 0; font-size: 0.7em; color: var(--text-muted); border: 1px solid var(--border); text-align: center;">
+                    Scan Status: Ready (tap camera for diagnostics)
+                </div>
+
+                <div class="camera-container" id="camera-container" style="margin-top:6px;">
+                    <video id="video" autoplay playsinline></video>
+                    <canvas id="canvas"></canvas>
+                </div>
+
+                <div id="debug-image-container" style="margin-top: 10px; display: none;">
+                    <div style="font-size: 12px; color: #666; margin-bottom: 5px;">Debug: Captured Frame</div>
+                    <img id="debug-image" alt="Captured video frame for QR diagnostic" style="border: 1px solid #ccc;" />
+                </div>
+
+                <div class="controls receiver-controls">
+                    <button class="btn" id="cameraBtn" onclick="toggleCamera()">📷</button>
+                    <button class="btn btn-secondary" onclick="resetReceiver()">🔄</button>
+                </div>
+
+                <div id="receiverInfo" style="display:block; margin-top:10px; font-size:0.8em; line-height:1.4; color: var(--text-muted);"></div>
+
+                <div id="downloadSection" style="display: none; text-align: center; margin-top:8px;">
+                    <a id="downloadLink" class="btn">💾 Download File</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Application version
+        const APP_VERSION = '0.1.0';
+        // Global variables
+        let fileData = null;
+        let chunks = [];
+        let currentChunkIndex = 0;
+        let displayInterval = null;
+        const DEFAULT_SPEED = 700; // Default display speed in milliseconds
+        let displaySpeed = DEFAULT_SPEED;
+
+        // Receiver variables
+        let video = null;
+        let canvas = null;
+        let canvasContext = null;
+        let scanning = false;
+        let receivedChunks = new Map();
+        let fileMetadata = null;
+        // Stabilization for QR scans to avoid partial reads
+        let lastCodeData = null;
+        let stableCount = 0;
+        let receptionCompleted = false;
+        let processedCooldownUntil = 0;
+        // Performance tuning
+        let SCAN_SCALE = 0.55; // scale down video frame before decoding (balances speed & fidelity)
+        let REQUIRE_STABLE_FRAMES = 1; // previously 2; reduced for faster throughput
+        let DECODE_COOLDOWN_MS = 90; // previously 300ms; shorter cooldown speeds next detection
+        let decodeTimes = [];
+        let framesProcessed = 0;
+
+        // Maximum data per QR code (safe size for QR with base64 encoding)
+        // QR Code version 40 with Low error correction can hold ~2953 bytes
+        // With JSON overhead, we use 1500 bytes of raw data -> ~2000 bytes base64
+        // Encoding options (dynamic)
+        let CURRENT_ECC = 'M'; // QRCode.CorrectLevel mapping (Medium for better reliability)
+        let MAX_QR_DATA = 200; // bytes per QR code (reduced for better detection)
+
+        // Debug logging
+        function debugLog(msg, elementId = 'debugConsole') {
+            const dbg = document.getElementById(elementId);
+            if (dbg) {
+                const time = new Date().toLocaleTimeString();
+                const div = document.createElement('div');
+                div.textContent = `[${time}] ${msg}`;
+                dbg.appendChild(div);
+                dbg.scrollTop = dbg.scrollHeight;
+                
+                // Keep only last 20 messages
+                while (dbg.children.length > 20) {
+                    dbg.removeChild(dbg.firstChild);
+                }
+            }
+            console.log(msg);
+        }
+
+        // Initialize version badge
+        (function initVersion(){
+            const vb = document.getElementById('versionBadge');
+            if (vb) {
+                vb.textContent = 'v' + APP_VERSION;
+            }
+        })();
+
+        // Sender debug logging
+        function senderLog(msg) {
+            debugLog(msg, 'senderDebugConsole');
+        }
+
+        // ==================== UTILITIES ====================
+        function extractAndSanitizeJson(raw) {
+            try {
+                raw = raw || '';
+                const startIdx = raw.indexOf('{');
+                const endIdx = raw.lastIndexOf('}');
+                if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+                    throw new Error('Not a complete JSON object (missing braces)');
+                }
+                let candidate = raw.substring(startIdx, endIdx + 1);
+                // Strip control characters that can break JSON parsing
+                candidate = candidate.replaceAll(/[\u0000-\u001F\u007F]/g, '');
+                return JSON.parse(candidate);
+            } catch (e) {
+                const preview = (raw || '').slice(0, 120);
+                debugLog('JSON sanitize/parse error: ' + e.message + ' | preview=' + preview);
+                throw e;
+            }
+        }
+
+        function isValidBase64(str) {
+            if (!str || typeof str !== 'string') return false;
+            if (str.length % 4 !== 0) return false;
+            return /^[A-Za-z0-9+/=]+$/.test(str);
+        }
+
+        function sanitizeBase64(str) {
+            if (!str || typeof str !== 'string') return '';
+            const sanitized = str.replaceAll(/[^A-Za-z0-9+/=]/g, '');
+            return sanitized;
+        }
+
+        // ==================== SENDER FUNCTIONS ====================
+
+        function switchTab(tabName) {
+            const tabs = document.querySelectorAll('.tab');
+            for (const tab of tabs) {
+                tab.classList.remove('active');
+            }
+            const contents = document.querySelectorAll('.tab-content');
+            for (const content of contents) {
+                content.classList.remove('active');
+            }
+            
+            if (typeof event !== 'undefined' && event && event.target) {
+                event.target.classList.add('active');
+            }
+            document.getElementById(tabName).classList.add('active');
+        }
+
+        // Drag and drop handlers
+        const uploadArea = document.getElementById('uploadArea');
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        }
+
+        function handleFile(file) {
+            // Prefer modern Blob.arrayBuffer() over FileReader.readAsArrayBuffer
+            file.arrayBuffer().then(buffer => {
+                fileData = {
+                    name: file.name,
+                    type: file.type || 'application/octet-stream',
+                    size: file.size,
+                    data: buffer
+                };
+                
+                processFile();
+            }).catch(err => {
+                debugLog('File read error: ' + (err && err.message ? err.message : err));
+            });
+        }
+
+        function processFile() {
+            const data = new Uint8Array(fileData.data);
+            chunks = [];
+            // Ensure we start from the first chunk when a new file is processed
+            currentChunkIndex = 0;
+            
+            // Create metadata chunk
+            const metadata = {
+                type: 'META',
+                fileName: fileData.name,
+                fileType: fileData.type,
+                fileSize: fileData.size,
+                totalChunks: Math.ceil(data.length / MAX_QR_DATA),
+                timestamp: Date.now()
+            };
+            
+            chunks.push(JSON.stringify(metadata));
+            
+            // Split file into chunks using current MAX_QR_DATA
+            let dataIndex = 0; // Ensure indices start at 0 and go to totalChunks-1
+            for (let i = 0; i < data.length; i += MAX_QR_DATA) {
+                const chunkData = data.slice(i, Math.min(i + MAX_QR_DATA, data.length));
+                const base64Data = btoa(String.fromCharCode.apply(null, chunkData));
+                
+                const chunk = {
+                    type: 'DATA',
+                    index: dataIndex,
+                    data: base64Data,
+                    checksum: simpleChecksum(chunkData)
+                };
+                
+                chunks.push(JSON.stringify(chunk));
+                dataIndex++;
+            }
+            
+            displayFileInfo();
+            // Automatically display the first QR (META) upon upload
+            displayNextChunk();
+            senderLog('Processed file with density=' + MAX_QR_DATA + 'B and ECC=' + CURRENT_ECC + ' (chunks=' + (chunks.length - 1) + ')');
+        }
+
+        function simpleChecksum(data) {
+            let sum = 0;
+            for (const b of data) {
+                sum = (sum + b) & 0xFFFFFFFF;
+            }
+            return sum;
+        }
+
+        function displayFileInfo() {
+            const chunkInfo = document.getElementById('chunkInfo');
+            if (!chunkInfo) return;
+            chunkInfo.style.display = 'block';
+            chunkInfo.innerHTML = `${fileData.name} | ${formatFileSize(fileData.size)} | ~${Math.ceil(chunks.length * displaySpeed / 1000)}s`;
+            document.getElementById('chunkTotal').textContent = '/ ' + chunks.length;
+            document.getElementById('chunkInput').max = chunks.length;
+            document.getElementById('chunkNav').style.display = 'flex';
+            document.getElementById('encodeCtrl').style.display = 'flex';
+            document.getElementById('speedCtrl').style.display = 'flex';
+            document.getElementById('senderDebugConsole').style.display = 'block';
+            senderLog('File selected: ' + fileData.name + ', size=' + fileData.size + 'B, chunks=' + chunks.length);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        function startDisplay() {
+            if (!chunks.length) return;
+            
+            stopDisplay(); // Clear any existing interval
+            // Don't reset currentChunkIndex - continue from where we are
+            displayNextChunk();
+            
+            displayInterval = setInterval(() => {
+                currentChunkIndex++;
+                if (currentChunkIndex >= chunks.length) {
+                    currentChunkIndex = 0; // Loop back to start
+                }
+                displayNextChunk();
+            }, displaySpeed);
+        }
+
+        function togglePlayPause() {
+            if (displayInterval) {
+                // Currently playing, pause it
+                stopDisplay();
+                document.getElementById('playPauseBtn').innerHTML = '▶️';
+            } else {
+                // Currently paused, start/resume
+                startDisplay();
+                document.getElementById('playPauseBtn').innerHTML = '⏸️';
+            }
+        }
+
+        function nextChunk() {
+            if (!chunks.length) return;
+            currentChunkIndex = (currentChunkIndex + 1) % chunks.length;
+            displayNextChunk();
+        }
+
+        function prevChunk() {
+            if (!chunks.length) return;
+            currentChunkIndex = (currentChunkIndex - 1 + chunks.length) % chunks.length;
+            displayNextChunk();
+        }
+
+        function goToChunk() {
+            if (!chunks.length) return;
+            const input = document.getElementById('chunkInput');
+            let chunkNum = Number.parseInt(input.value);
+            if (chunkNum < 1) chunkNum = 1;
+            if (chunkNum > chunks.length) chunkNum = chunks.length;
+            input.value = chunkNum;
+            currentChunkIndex = chunkNum - 1;
+            displayNextChunk();
+        }
+
+        function updateSpeedRealtime() {
+            displaySpeed = Number.parseInt(document.getElementById('speedSlider').value);
+            document.getElementById('speedValue').textContent = displaySpeed + 'ms';
+            if (chunks.length > 0) {
+                const chunkInfo = document.getElementById('chunkInfo');
+                const estTime = Math.ceil(chunks.length * displaySpeed / 1000);
+                chunkInfo.innerHTML = `Name: ${fileData.name} | Size: ${formatFileSize(fileData.size)} | Est: ~${estTime}s`;
+            }
+            if (displayInterval) {
+                stopDisplay();
+                displayInterval = setInterval(() => {
+                    currentChunkIndex++;
+                    if (currentChunkIndex >= chunks.length) currentChunkIndex = 0;
+                    displayNextChunk();
+                }, displaySpeed);
+            }
+        }
+
+        function updateEncodingOptions() {
+            const ecc = document.getElementById('eccSelect').value;
+            const density = Number.parseInt(document.getElementById('densitySlider').value);
+            CURRENT_ECC = ecc;
+            MAX_QR_DATA = density;
+            document.getElementById('densityValue').textContent = density + ' B';
+
+            if (!fileData) return;
+            // Re-chunk the file with new settings
+            senderLog('Re-encoding with ECC=' + CURRENT_ECC + ', density=' + MAX_QR_DATA + 'B');
+            processFile();
+        }
+
+        function displayNextChunk() {
+            if (!chunks || chunks.length === 0) return;
+            
+            const qrcodeDiv = document.getElementById('qrcode');
+            const chunkData = chunks[currentChunkIndex];
+            try {
+                // Hidden off-screen generation (avoid flicker, simpler readiness logic)
+                const tempDiv = document.createElement('div');
+                tempDiv.style.position = 'absolute';
+                tempDiv.style.left = '-9999px';
+                tempDiv.style.top = '0';
+                document.body.appendChild(tempDiv);
+
+                const levelMap = { L: QRCode.CorrectLevel.L, M: QRCode.CorrectLevel.M, Q: QRCode.CorrectLevel.Q, H: QRCode.CorrectLevel.H };
+                new QRCode(tempDiv, {
+                    text: chunkData,
+                    width: 256,
+                    height: 256,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: levelMap[CURRENT_ECC] || QRCode.CorrectLevel.L
+                });
+                senderLog('QR init (simple): children=' + tempDiv.childNodes.length);
+
+                let attempts = 0;
+                const maxAttempts = 10; // 10 * 50ms = 500ms
+
+                // Small helpers to keep finalize simple and reduce nesting
+                const appendImageElement = (imgEl) => {
+                    const outImg = imgEl.cloneNode(true);
+                    outImg.style.maxWidth = '256px';
+                    outImg.style.width = '100%';
+                    outImg.style.height = 'auto';
+                    outImg.style.display = 'block';
+                    qrcodeDiv.appendChild(outImg);
+                };
+
+                const appendCanvasAsImage = (canvasEl) => {
+                    try {
+                        const dataURL = canvasEl.toDataURL('image/png');
+                        const outImg = document.createElement('img');
+                        outImg.src = dataURL;
+                        outImg.style.maxWidth = '360px';
+                        outImg.style.width = '100%';
+                        outImg.style.height = 'auto';
+                        outImg.style.display = 'block';
+                        qrcodeDiv.appendChild(outImg);
+                    } catch (err) {
+                        senderLog('Canvas toDataURL error: ' + (err && err.message ? err.message : err) + '; cloning canvas.');
+                        const cloneCanvas = canvasEl.cloneNode(true);
+                        cloneCanvas.style.maxWidth = '256px';
+                        cloneCanvas.style.width = '100%';
+                        cloneCanvas.style.height = '256px';
+                        cloneCanvas.style.display = 'block';
+                        qrcodeDiv.appendChild(cloneCanvas);
+                    }
+                };
+
+                const appendFallbackContents = () => {
+                    senderLog('QR finalize fallback: img/canvas not ready (attempts=' + attempts + ').');
+                    for (const n of tempDiv.childNodes) {
+                        qrcodeDiv.appendChild(n.cloneNode(true));
+                    }
+                };
+
+                const finalize = () => {
+                    const img = tempDiv.querySelector('img');
+                    const canvasEl = tempDiv.querySelector('canvas');
+                    qrcodeDiv.innerHTML = '';
+
+                    const imgReady = img && img.naturalWidth > 0 && img.naturalHeight > 0;
+                    const canvasReady = canvasEl && canvasEl.width > 0 && canvasEl.height > 0;
+
+                    if (imgReady) {
+                        senderLog('Using IMG naturalSize=' + img.naturalWidth + 'x' + img.naturalHeight);
+                        appendImageElement(img);
+                    } else if (canvasReady) {
+                        senderLog('Using CANVAS size=' + canvasEl.width + 'x' + canvasEl.height);
+                        appendCanvasAsImage(canvasEl);
+                    } else {
+                        appendFallbackContents();
+                    }
+
+                    // Use modern DOM removal API
+                    tempDiv.remove();
+
+                    // Measurement (keep minimal branching)
+                    const child = qrcodeDiv.firstElementChild;
+                    if (child) {
+                        const rect = child.getBoundingClientRect();
+                        senderLog('Final QR rect=' + Math.round(rect.width) + 'x' + Math.round(rect.height));
+                        if (rect.height === 0) {
+                            child.style.height = child.style.width || child.style.maxWidth || '256px';
+                            senderLog('Applied height fallback due to 0 height.');
+                        }
+                    } else {
+                        senderLog('WARNING: No child in #qrcode after finalize.');
+                    }
+                };
+
+                const wait = () => {
+                    const img = tempDiv.querySelector('img');
+                    const canvasEl = tempDiv.querySelector('canvas');
+                    const imgReady = img && img.naturalWidth > 0 && img.naturalHeight > 0;
+                    const canvasReady = canvasEl && canvasEl.width > 0 && canvasEl.height > 0;
+
+                    // Combine readiness and timeout into a single conditional branch to reduce cognitive complexity
+                    if (imgReady || canvasReady || attempts >= maxAttempts) {
+                        senderLog('QR ready (imgReady=' + imgReady + ', canvasReady=' + canvasReady + ', attempts=' + attempts + ')');
+                        finalize();
+                        return;
+                    }
+
+                    attempts++;
+                    setTimeout(wait, 50);
+                };
+                wait();
+
+            } catch (e) {
+                console.error('QR Generation Error:', e, 'Data length:', chunkData.length);
+                senderLog('QR Generation Error: ' + (e && e.message ? e.message : e) + ', Data length: ' + chunkData.length);
+                qrcodeDiv.innerHTML = '<div style="color: red; padding: 20px;">Error generating QR code<br>Chunk ' + (currentChunkIndex + 1) + '<br>Size: ' + chunkData.length + ' bytes</div>';
+            }
+            
+            const progress = ((currentChunkIndex + 1) / chunks.length * 100).toFixed(1);
+            document.getElementById('senderProgress').style.width = progress + '%';
+            document.getElementById('senderProgressText').textContent = progress + '%';
+            document.getElementById('chunkInput').value = currentChunkIndex + 1;
+        }
+
+        function stopDisplay() {
+            if (displayInterval) {
+                clearInterval(displayInterval);
+                displayInterval = null;
+            }
+        }
+
+        function resetSender() {
+            stopDisplay();
+            fileData = null;
+            chunks = [];
+            currentChunkIndex = 0;
+            document.getElementById('chunkInfo').style.display = 'none';
+            document.getElementById('chunkNav').style.display = 'none';
+            document.getElementById('speedCtrl').style.display = 'none';
+            document.getElementById('fileInput').value = '';
+            document.getElementById('qrcode').innerHTML = '';
+            document.getElementById('senderProgress').style.width = '0%';
+            document.getElementById('senderProgressText').textContent = '0%';
+            document.getElementById('playPauseBtn').innerHTML = '▶️';
+            //clear sender debug console
+            const senderDbg = document.getElementById('senderDebugConsole');
+            if (senderDbg) {
+                senderDbg.innerHTML = '<div>Sender Debug Ready...</div>';
+            }
+        }
+
+        // ==================== RECEIVER FUNCTIONS ====================
+
+        function toggleCamera() {
+            const btn = document.getElementById('cameraBtn');
+            
+            // Get elements if not already assigned
+            if (!video) {
+                video = document.getElementById('video');
+                canvas = document.getElementById('canvas');
+                canvasContext = canvas.getContext('2d');
+            }
+            
+            if (scanning && video.srcObject) {
+                // Stop camera
+                debugLog('Stopping camera...');
+                scanning = false;
+                for (const track of video.srcObject.getTracks()) {
+                    try {
+                        track.stop();
+                    } catch (err) {
+                        console.warn('Error stopping track:', err);
+                    }
+                }
+                video.srcObject = null;
+                btn.innerHTML = '📷';
+                btn.classList.remove('btn-danger');
+                // Reset border
+                document.getElementById('camera-container').classList.remove('detecting', 'detected');
+            } else {
+                // Start camera
+                debugLog('Starting camera...');
+                
+                navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                })
+                .then(function(stream) {
+                    video.srcObject = stream;
+                    video.setAttribute('playsinline', true);
+                    video.play();
+                    scanning = true;
+                    btn.innerHTML = '⏹️';
+                    btn.classList.add('btn-danger');
+                    // Reset border
+                    document.getElementById('camera-container').classList.remove('detecting', 'detected');
+                    // Reset scan status
+                    const statusEl = document.getElementById('scanStatus');
+                    if (statusEl) {
+                        statusEl.textContent = 'Scanning... (tap camera for diagnostics)';
+                    }
+                    debugLog('Camera started successfully');
+                    requestAnimationFrame(scanQRCode);
+                })
+                .catch(function(err) {
+                    debugLog('Camera error: ' + err.message);
+                });
+            }
+        }
+
+        function scanQRCode() {
+            if (!scanning || receptionCompleted) return;
+            
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                // Cooldown: briefly skip frames after successful processing
+                if (processedCooldownUntil && Date.now() < processedCooldownUntil) {
+                    requestAnimationFrame(scanQRCode);
+                    return;
+                }
+                // Minimal logging to avoid console spam
+                // debugLog('Video ready. frame=' + video.videoWidth + 'x' + video.videoHeight);
+                // Dynamically pick a reduced working dimension for speed
+                const vW = video.videoWidth;
+                const vH = video.videoHeight;
+                if (!vW || !vH) {
+                    requestAnimationFrame(scanQRCode);
+                    return;
+                }
+                const targetW = Math.max(240, Math.floor(vW * SCAN_SCALE));
+                const targetH = Math.max(240, Math.floor(vH * SCAN_SCALE));
+                // Use scaled full frame for QR detection
+                canvas.width = targetW;
+                canvas.height = targetH;
+                canvasContext.drawImage(video, 0, 0, vW, vH, 0, 0, targetW, targetH); // scaled full frame
+                const effectiveW = targetW;
+                const effectiveH = targetH;
+                
+                const imageData = canvasContext.getImageData(0, 0, effectiveW, effectiveH);
+                const t1 = performance.now();
+
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: 'attemptBoth'
+                });
+                const t2 = performance.now();
+                const decodeDuration = (t2 - t1);
+                decodeTimes.push(decodeDuration);
+                framesProcessed++;
+                if (framesProcessed % 60 === 0) {
+                    const avg = (decodeTimes.reduce((a,b)=>a+b,0) / decodeTimes.length).toFixed(1);
+                    // Update scan status display
+                    const statusEl = document.getElementById('scanStatus');
+                    if (statusEl) {
+                        statusEl.textContent = `Avg: ${avg}ms | Scale: ${(SCAN_SCALE * 100).toFixed(0)}%`;
+                    }
+                    // Auto-tune: if avg > 25ms, lower resolution further (but keep minimum)
+                    if (avg > 25 && SCAN_SCALE > 0.35) {
+                        SCAN_SCALE = Math.max(0.35, SCAN_SCALE - 0.05);
+                        // Update display after auto-tune
+                        if (statusEl) {
+                            statusEl.textContent = `Avg: ${avg}ms | Scale: ${(SCAN_SCALE * 100).toFixed(0)}% (tuned)`;
+                        }
+                    }
+                    // If very fast (<12ms) and detection quality low (few consecutive successes), optionally raise scale
+                    if (avg < 12 && SCAN_SCALE < 0.7) {
+                        SCAN_SCALE = Math.min(0.7, SCAN_SCALE + 0.05);
+                        // Update display after auto-tune
+                        if (statusEl) {
+                            statusEl.textContent = `Avg: ${avg}ms | Scale: ${(SCAN_SCALE * 100).toFixed(0)}% (tuned)`;
+                        }
+                    }
+                }
+                
+                if (code) {
+                    const data = code.data || '';
+                    const preview = data.length > 100 ? data.substring(0, 100) + '...' : data;
+                    debugLog('QR detected len=' + data.length + ' preview=' + preview);
+
+                    // Require the same payload for a couple of consecutive frames
+                    if (data === lastCodeData) {
+                        stableCount++;
+                    } else {
+                        lastCodeData = data;
+                        stableCount = 1;
+                    }
+
+                    // Only process when stable to reduce JSON.parse errors
+                    if (stableCount >= REQUIRE_STABLE_FRAMES) {
+                        debugLog('Stable QR detected. Processing...');
+                        // Set detected border
+                        document.getElementById('camera-container').classList.remove('detecting');
+                        document.getElementById('camera-container').classList.add('detected');
+                        processQRCode(data);
+                        // Reset to prevent repeated processing of same frame
+                        stableCount = 0;
+                        lastCodeData = null;
+                        processedCooldownUntil = Date.now() + DECODE_COOLDOWN_MS; // shorter cooldown for faster cycle
+                    }
+                } else {
+                    // Set detecting border
+                    document.getElementById('camera-container').classList.remove('detected');
+                    document.getElementById('camera-container').classList.add('detecting');
+                }
+            }
+            
+            requestAnimationFrame(scanQRCode);
+        }
+
+        // Diagnostic function for manual QR detection testing
+        function diagnoseQRCode() {
+            if (!scanning || !video || video.readyState !== video.HAVE_ENOUGH_DATA) {
+                debugLog('DIAGNOSTIC: Camera not ready for capture');
+                return;
+            }
+
+            // Visual feedback - flash the container
+            const container = document.getElementById('camera-container');
+            container.style.boxShadow = '0 0 20px rgba(88, 101, 242, 0.8)';
+            setTimeout(() => {
+                container.style.boxShadow = '';
+            }, 200);
+
+            debugLog('=== MANUAL QR DIAGNOSTIC START ===');
+
+            const vW = video.videoWidth;
+            const vH = video.videoHeight;
+            debugLog(`DIAGNOSTIC: Video dimensions: ${vW}x${vH}`);
+
+            if (!vW || !vH) {
+                debugLog('DIAGNOSTIC: Video has no dimensions');
+                return;
+            }
+
+            // Use full video frame for diagnostic (no cropping)
+            canvas.width = vW;
+            canvas.height = vH;
+            debugLog(`DIAGNOSTIC: Canvas set to: ${vW}x${vH}, scale: 100% (full frame, no cropping)`);
+
+            canvasContext.drawImage(video, 0, 0, vW, vH, 0, 0, vW, vH); // full frame
+            const effectiveW = vW;
+            const effectiveH = vH;
+
+            const imageData = canvasContext.getImageData(0, 0, effectiveW, effectiveH);
+            debugLog(`DIAGNOSTIC: Processing image data: ${effectiveW}x${effectiveH} (${imageData.data.length} bytes)`);
+
+            // Analyze image brightness/contrast
+            let totalBrightness = 0;
+            let minBrightness = 255;
+            let maxBrightness = 0;
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                const r = imageData.data[i];
+                const g = imageData.data[i + 1];
+                const b = imageData.data[i + 2];
+                const brightness = (r + g + b) / 3;
+                totalBrightness += brightness;
+                minBrightness = Math.min(minBrightness, brightness);
+                maxBrightness = Math.max(maxBrightness, brightness);
+            }
+            const avgBrightness = totalBrightness / (imageData.data.length / 4);
+            debugLog(`DIAGNOSTIC: Brightness - Avg: ${avgBrightness.toFixed(1)}, Min: ${minBrightness}, Max: ${maxBrightness}, Contrast: ${(maxBrightness - minBrightness).toFixed(1)}`);
+
+            const t1 = performance.now();
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                inversionAttempts: 'attemptBoth'
+            });
+            const t2 = performance.now();
+            const decodeDuration = (t2 - t1);
+
+            debugLog(`DIAGNOSTIC: jsQR processing took ${decodeDuration.toFixed(2)}ms`);
+
+            // Display captured frame for debugging
+            const debugImg = document.getElementById('debug-image');
+            const debugContainer = document.getElementById('debug-image-container');
+            if (debugImg && debugContainer) {
+                debugImg.src = canvas.toDataURL('image/png');
+                debugImg.width = canvas.width;
+                debugImg.height = canvas.height;
+                debugContainer.style.display = 'block';
+                debugLog(`DIAGNOSTIC: Debug image updated (${canvas.width}x${canvas.height})`);
+            }
+
+            if (code) {
+                const data = code.data || '';
+                debugLog(`DIAGNOSTIC: QR DETECTED! Length: ${data.length}`);
+                debugLog(`DIAGNOSTIC: QR Location: (${code.location.topLeftCorner.x.toFixed(1)}, ${code.location.topLeftCorner.y.toFixed(1)}) to (${code.location.bottomRightCorner.x.toFixed(1)}, ${code.location.bottomRightCorner.y.toFixed(1)})`);
+                debugLog(`DIAGNOSTIC: Data preview: ${data.substring(0, 200)}${data.length > 200 ? '...' : ''}`);
+
+                // Try to parse as JSON
+                try {
+                    const chunk = extractAndSanitizeJson(data);
+                    debugLog(`DIAGNOSTIC: Successfully parsed as: type=${chunk.type}, index=${chunk.index || 'N/A'}`);
+                } catch (e) {
+                    debugLog(`DIAGNOSTIC: JSON parse failed: ${e.message}`);
+                }
+
+                // Set detected border
+                document.getElementById('camera-container').classList.remove('detecting');
+                document.getElementById('camera-container').classList.add('detected');
+            } else {
+                debugLog('DIAGNOSTIC: No QR code found in frame');
+                debugLog('DIAGNOSTIC: Try increasing SCAN_SCALE or ensuring QR code is centered in the cropped region');
+                // Set detecting border
+                document.getElementById('camera-container').classList.remove('detected');
+                document.getElementById('camera-container').classList.add('detecting');
+            }
+
+            debugLog('=== MANUAL QR DIAGNOSTIC END ===');
+        }
+
+        // Add click listener to camera container for manual diagnostics
+        document.getElementById('camera-container').addEventListener('click', function() {
+            diagnoseQRCode();
+        });
+
+        // Add touch support for mobile devices
+        document.getElementById('camera-container').addEventListener('touchend', function(e) {
+            e.preventDefault(); // Prevent mouse events
+            diagnoseQRCode();
+        });
+
+        function processQRCode(data) {
+            try {
+                const chunk = extractAndSanitizeJson(data);
+                debugLog('Parsed OK: type=' + chunk.type + ('index' in chunk ? ', idx=' + chunk.index : '') + ', dataLen=' + (chunk.data ? chunk.data.length : 0));
+                
+                if (chunk.type === 'META') {
+                    if (!fileMetadata) {
+                        fileMetadata = chunk;
+                        receivedChunks.clear();
+                        document.getElementById('receiverInfo').style.display = 'block';
+                        updateReceiverInfo();
+                        debugLog('META: ' + chunk.fileName + ', chunks=' + chunk.totalChunks + ' (expecting indices 0..' + (chunk.totalChunks - 1) + ')');
+                    }
+                } else if (chunk.type === 'DATA') {
+                    // Validate index range if metadata known
+                    if (fileMetadata && (chunk.index < 0 || chunk.index >= fileMetadata.totalChunks)) {
+                        debugLog('DATA index out of range: ' + chunk.index + ' (expected 0..' + (fileMetadata.totalChunks - 1) + ')');
+                        return;
+                    }
+                    if (receivedChunks.has(chunk.index)) {
+                        debugLog('Duplicate chunk ' + chunk.index + ' - skipped');
+                    } else {
+                        // Validate base64 payload format to catch corruption early
+                        const b64 = chunk.data || '';
+                        if (!isValidBase64(b64)) {
+                            debugLog('DATA ' + chunk.index + ' rejected: invalid base64 format (len=' + b64.length + ')');
+                            return;
+                        }
+                        receivedChunks.set(chunk.index, chunk);
+                        debugLog('DATA ' + chunk.index + ' received (' + receivedChunks.size + '/' + (fileMetadata ? fileMetadata.totalChunks : '?') + ')');
+                        
+                        if (fileMetadata) {
+                            updateReceiverInfo();
+                            
+                            // Check if we have all chunks (totalChunks is data chunks only, not including META)
+                            if (receivedChunks.size === fileMetadata.totalChunks) {
+                                debugLog('All chunks received! Reconstructing...');
+                                receptionCompleted = true;
+                                // Stop camera immediately to prevent further detections
+                                try {
+                                    toggleCamera();
+                                } catch (err) {
+                                    debugLog('Error stopping camera: ' + (err && err.message ? err.message : err));
+                                }
+                                reconstructFile();
+                            }
+                        } else {
+                            // Store chunk even if metadata not received yet
+                            debugLog('Buffered chunk ' + chunk.index + ' (waiting for metadata)');
+                        }
+                    }
+                }
+            } catch (e) {
+                // Invalid QR code data, logged in extractAndSanitizeJson
+                debugLog('processQRCode error: ' + (e && e.message ? e.message : e));
+                console.error('processQRCode error:', e);
+            }
+        }
+
+        function updateReceiverInfo() {
+            if (!fileMetadata) return;
+            const progress = (receivedChunks.size / fileMetadata.totalChunks * 100).toFixed(1);
+            document.getElementById('receiverProgress').style.width = progress + '%';
+            document.getElementById('receiverProgressText').textContent = progress + '%';
+            const infoDiv = document.getElementById('receiverInfo');
+            if (infoDiv) {
+                const estChunks = `${receivedChunks.size}/${fileMetadata.totalChunks}`;
+                infoDiv.innerHTML = `${fileMetadata.fileName} | ${formatFileSize(fileMetadata.fileSize)} | Chunks: ${estChunks}`;
+            }
+        }
+
+        function reconstructFile() {
+            debugLog('Reconstructing file from ' + receivedChunks.size + ' chunks...');
+            const sortedChunks = Array.from(receivedChunks.values()).sort((a, b) => a.index - b.index);
+            
+            // Combine all chunks
+            let combinedData = '';
+            for (const chunk of sortedChunks) {
+                combinedData += chunk.data;
+            }
+            
+            // Convert base64 to binary with validation
+            const combinedLen = combinedData.length;
+            if (!isValidBase64(combinedData)) {
+                debugLog('Reconstruct error: combined base64 invalid format (len=' + combinedLen + ').');
+                const sanitized = sanitizeBase64(combinedData);
+                if (isValidBase64(sanitized)) {
+                    debugLog('Sanitized base64 appears valid. Proceeding with sanitized data.');
+                    combinedData = sanitized;
+                } else {
+                    debugLog('Sanitized base64 still invalid. Aborting reconstruction.');
+                    return;
+                }
+            }
+            let binaryString;
+            try {
+                binaryString = atob(combinedData);
+            } catch (err) {
+                debugLog('atob failed: ' + (err && err.message ? err.message : err));
+                return;
+            }
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                // Use codePointAt to follow modern recommendations; mask to 0xFF to store the low byte
+                const cp = binaryString.codePointAt(i);
+                bytes[i] = (typeof cp === 'number' ? (cp & 0xFF) : 0);
+            }
+            
+            // Create blob and download link
+            const blob = new Blob([bytes], { type: fileMetadata.fileType });
+            const url = URL.createObjectURL(blob);
+            
+            const downloadLink = document.getElementById('downloadLink');
+            downloadLink.href = url;
+            downloadLink.download = fileMetadata.fileName;
+            
+            document.getElementById('downloadSection').style.display = 'block';
+            debugLog('File reconstructed successfully!');
+            // Camera is already stopped when all chunks are received; no toggle here
+        }
+
+        function resetReceiver() {
+            if (scanning && video && video.srcObject) {
+                toggleCamera(); // Stop camera if running
+            }
+            receivedChunks.clear();
+            fileMetadata = null;
+            document.getElementById('receiverInfo').style.display = 'none';
+            document.getElementById('downloadSection').style.display = 'none';
+            document.getElementById('receiverProgress').style.width = '0%';
+            document.getElementById('receiverProgressText').textContent = '0%';
+            receptionCompleted = false;
+            processedCooldownUntil = 0;
+            // Reset performance tracking
+            decodeTimes = [];
+            framesProcessed = 0;
+            // Reset border
+            document.getElementById('camera-container').classList.remove('detecting', 'detected');
+            // Hide debug image
+            const debugContainer = document.getElementById('debug-image-container');
+            if (debugContainer) {
+                debugContainer.style.display = 'none';
+            }
+            // Reset scan status
+            const statusEl = document.getElementById('scanStatus');
+            if (statusEl) {
+                statusEl.textContent = 'Scan Status: Ready (tap camera for diagnostics)';
+            }
+            //clear debug console
+            const dbg = document.getElementById('debugConsole');
+            if (dbg) {
+                dbg.textContent = '';
+            }
+        }
+
+        // Keyboard navigation for sender QR codes
+        document.addEventListener('keydown', function(event) {
+            if (document.getElementById('sender').classList.contains('active') && chunks.length > 0) {
+                if (event.key === 'ArrowLeft') {
+                    prevChunk();
+                    event.preventDefault();
+                } else if (event.key === 'ArrowRight') {
+                    nextChunk();
+                    event.preventDefault();
+                } else if (event.key === 'ArrowUp') {
+                    currentChunkIndex = 0;
+                    displayNextChunk();
+                    event.preventDefault();
+                } else if (event.key === 'ArrowDown') {
+                    currentChunkIndex = chunks.length - 1;
+                    displayNextChunk();
+                    event.preventDefault();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
